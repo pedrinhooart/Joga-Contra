@@ -1,0 +1,10 @@
+{
+  "description": "Connect amateur football and futsal teams seeking opponents, allowing users to post games, find matches, and communicate seamlessly.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
