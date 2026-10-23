@@ -26,3 +26,7 @@ O arquivo gerado fica em `build/app/outputs/flutter-apk/app-debug.apk`.
 - `lib/theme/`: paleta e tema visual.
 
 As interações são demonstrativas e os dados ficam apenas em memória durante a sessão. Autenticação, persistência, mensagens em tempo real, mapas e envio de notificações dependem de integrações futuras.
+
+## Banco de dados
+
+O modelo MySQL para um backend/API compartilhado com Android e iOS está documentado em [database/DATABASE_DESIGN.md](database/DATABASE_DESIGN.md). O schema, catálogos iniciais e consultas de referência ficam em `database/`.
