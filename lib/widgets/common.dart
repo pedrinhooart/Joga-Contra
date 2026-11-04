@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import '../models/game.dart';
+import '../core/formatters.dart';
+import '../models/anuncio_partida.dart';
 import '../theme/app_theme.dart';
 
 class BrandMark extends StatelessWidget {
@@ -104,10 +105,20 @@ class PitchLinesPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
+/// Escudo do time. Sem imagem enviada, mostra a sigla do time.
+/// Pendente: exibir `urlEscudo` quando o upload de imagens existir.
 class Crest extends StatelessWidget {
-  const Crest({super.key, this.label = 'UFC', this.small = false});
+  const Crest({
+    super.key,
+    this.label = '',
+    this.small = false,
+    this.ano,
+    this.icon = Icons.sports_soccer,
+  });
   final String label;
   final bool small;
+  final int? ano;
+  final IconData icon;
   @override
   Widget build(BuildContext context) => Container(
     width: small ? 40 : 60,
@@ -129,15 +140,11 @@ class Crest extends StatelessWidget {
             fontSize: small ? 9 : 11,
           ),
         ),
-        Icon(
-          label == 'RA' ? Icons.emoji_events_outlined : Icons.sports_soccer,
-          color: AppColors.green,
-          size: small ? 14 : 20,
-        ),
-        if (!small)
-          const Text(
-            '2015',
-            style: TextStyle(fontSize: 7, color: AppColors.muted),
+        Icon(icon, color: AppColors.green, size: small ? 14 : 20),
+        if (!small && ano != null)
+          Text(
+            '$ano',
+            style: const TextStyle(fontSize: 7, color: AppColors.muted),
           ),
       ],
     ),
@@ -276,9 +283,9 @@ class ActionButton extends StatelessWidget {
   }
 }
 
-class GameCard extends StatelessWidget {
-  const GameCard({super.key, required this.game, required this.onTap});
-  final Game game;
+class AnuncioCard extends StatelessWidget {
+  const AnuncioCard({super.key, required this.anuncio, required this.onTap});
+  final AnuncioPartida anuncio;
   final VoidCallback onTap;
   @override
   Widget build(BuildContext context) => Panel(
@@ -287,14 +294,14 @@ class GameCard extends StatelessWidget {
       children: [
         Row(
           children: [
-            Crest(label: game.crest),
+            Crest(label: anuncio.time.siglaExibicao),
             const SizedBox(width: 11),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    game.name,
+                    anuncio.time.nome,
                     style: const TextStyle(
                       fontWeight: FontWeight.w800,
                       fontSize: 14,
@@ -302,7 +309,9 @@ class GameCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${game.city} · ${game.distance}',
+                    anuncio.distanciaKm == null
+                        ? anuncio.localExibicao
+                        : '${anuncio.localExibicao} · ${Formatos.distancia(anuncio.distanciaKm!)}',
                     style: const TextStyle(
                       color: AppColors.muted,
                       fontSize: 11,
@@ -318,9 +327,13 @@ class GameCard extends StatelessWidget {
           spacing: 6,
           runSpacing: 6,
           children: [
-            TagPill(game.sport, green: game.sport == 'Futebol'),
-            TagPill(game.category),
-            TagPill(game.level),
+            TagPill(
+              anuncio.modalidade.nome,
+              green: anuncio.modalidade.codigo == 'society',
+            ),
+            TagPill(anuncio.categoriaEtaria.nome),
+            if (anuncio.nivelTecnico != null)
+              TagPill(anuncio.nivelTecnico!.nome),
           ],
         ),
         const Divider(height: 22, color: AppColors.border),
@@ -334,7 +347,7 @@ class GameCard extends StatelessWidget {
             const SizedBox(width: 6),
             Expanded(
               child: Text(
-                '${game.date} · ${game.time}',
+                '${Formatos.dataCurta(anuncio.dataHoraInicio)} · ${Formatos.hora(anuncio.dataHoraInicio)}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 11),
@@ -345,7 +358,7 @@ class GameCard extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.only(left: 21, top: 5),
           child: Text(
-            game.place,
+            anuncio.nomeLocal,
             style: const TextStyle(fontSize: 11, color: AppColors.muted),
           ),
         ),

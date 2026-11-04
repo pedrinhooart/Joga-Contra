@@ -1,23 +1,50 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import '../models/game.dart';
+import '../core/formatters.dart';
+import '../models/anuncio_partida.dart';
+import '../models/referencia.dart';
+import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/carregador.dart';
 import '../widgets/common.dart';
+
+/// Filtros escolhidos na busca. Guardado pelo AppShell para sobreviver à
+/// navegação entre abas.
+class FiltrosBusca {
+  const FiltrosBusca({
+    this.texto = '',
+    this.idModalidade,
+    this.idCategoriaEtaria,
+    this.idNivelTecnico,
+    this.raioKm = 25,
+    this.data,
+  });
+  final String texto;
+  final int? idModalidade, idCategoriaEtaria, idNivelTecnico;
+  final int raioKm;
+  final DateTime? data;
+
+  FiltroAnuncios get consulta => FiltroAnuncios(
+    texto: texto.trim().isEmpty ? null : texto.trim(),
+    idModalidade: idModalidade,
+    idCategoriaEtaria: idCategoriaEtaria,
+    idNivelTecnico: idNivelTecnico,
+    raioKm: raioKm,
+    data: data,
+  );
+}
 
 class DiscoverScreen extends StatefulWidget {
   const DiscoverScreen({
     super.key,
-    required this.games,
-    required this.query,
-    required this.sport,
-    required this.onQuery,
-    required this.onSport,
-    required this.onSelectGame,
+    required this.filtros,
+    required this.onFiltros,
+    required this.onSelectAnuncio,
     required this.onMap,
   });
-  final List<Game> games;
-  final String query, sport;
-  final ValueChanged<String> onQuery, onSport;
-  final ValueChanged<Game> onSelectGame;
+  final FiltrosBusca filtros;
+  final ValueChanged<FiltrosBusca> onFiltros;
+  final ValueChanged<AnuncioPartida> onSelectAnuncio;
   final VoidCallback onMap;
 
   @override
@@ -25,28 +52,65 @@ class DiscoverScreen extends StatefulWidget {
 }
 
 class _DiscoverScreenState extends State<DiscoverScreen> {
-  String category = 'Todas', level = 'Todos', distance = '25', date = '';
+  static const _raios = [5, 10, 25, 50, 100];
+  late FiltrosBusca f = widget.filtros;
+  late final texto = TextEditingController(text: f.texto);
+  Future<List<AnuncioPartida>>? _resultados;
+  Timer? _debounce;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _resultados ??= _buscar();
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    texto.dispose();
+    super.dispose();
+  }
+
+  Future<List<AnuncioPartida>> _buscar() =>
+      AppScope.repos(context).anuncios.buscar(f.consulta);
+
+  void _aplicar(FiltrosBusca novo, {bool imediato = true}) {
+    setState(() => f = novo);
+    widget.onFiltros(novo);
+    _debounce?.cancel();
+    if (imediato) {
+      setState(() => _resultados = _buscar());
+    } else {
+      _debounce = Timer(
+        const Duration(milliseconds: 400),
+        () => mounted ? setState(() => _resultados = _buscar()) : null,
+      );
+    }
+  }
+
+  FiltrosBusca _com({
+    String? texto,
+    int? Function()? modalidade,
+    int? Function()? categoria,
+    int? Function()? nivel,
+    int? raio,
+    DateTime? Function()? data,
+  }) => FiltrosBusca(
+    texto: texto ?? f.texto,
+    idModalidade: modalidade != null ? modalidade() : f.idModalidade,
+    idCategoriaEtaria: categoria != null ? categoria() : f.idCategoriaEtaria,
+    idNivelTecnico: nivel != null ? nivel() : f.idNivelTecnico,
+    raioKm: raio ?? f.raioKm,
+    data: data != null ? data() : f.data,
+  );
+
+  String _nome(List<ItemReferencia> lista, int? id, String todos) =>
+      lista.where((i) => i.id == id).map((i) => i.nome).firstOrNull ?? todos;
+
   @override
   Widget build(BuildContext context) {
-    final results = widget.games.where((g) {
-      final matchesQuery = '${g.name} ${g.city} ${g.place}'
-          .toLowerCase()
-          .contains(widget.query.toLowerCase());
-      final matchesDate =
-          date.isEmpty ||
-          (date.endsWith('18')
-              ? g.date.contains('18')
-              : date.endsWith('19')
-              ? g.date.contains('19')
-              : false);
-      return (widget.sport == 'Todos' || g.sport == widget.sport) &&
-          (category == 'Todas' || g.category == category) &&
-          (level == 'Todos' || g.level == level) &&
-          double.parse(g.distance.replaceAll(',', '.').split(' ').first) <=
-              double.parse(distance) &&
-          matchesDate &&
-          matchesQuery;
-    }).toList();
+    final refs = AppScope.of(context).referencias;
+    final dataTexto = f.data == null ? null : Formatos.dataNumerica(f.data!);
     return ListView(
       padding: const EdgeInsets.fromLTRB(18, 22, 18, 28),
       children: [
@@ -55,7 +119,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           subtitle: 'Encontre um adversário e dê o primeiro passe.',
         ),
         TextField(
-          onChanged: widget.onQuery,
+          controller: texto,
+          onChanged: (v) => _aplicar(_com(texto: v), imediato: false),
           decoration: const InputDecoration(
             prefixIcon: Icon(Icons.search),
             hintText: 'Busque um time, cidade ou região',
@@ -68,18 +133,21 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(
-                  children: ['Todos', 'Futebol', 'Futsal']
-                      .map(
-                        (s) => Padding(
-                          padding: const EdgeInsets.only(right: 7),
-                          child: ChoiceChip(
-                            label: Text(s),
-                            selected: widget.sport == s,
-                            onSelected: (_) => widget.onSport(s),
-                          ),
+                  children: [
+                    for (final (id, nome) in [
+                      (null, 'Todos'),
+                      for (final m in refs.modalidades) (m.id, m.nome),
+                    ])
+                      Padding(
+                        padding: const EdgeInsets.only(right: 7),
+                        child: ChoiceChip(
+                          label: Text(nome),
+                          selected: f.idModalidade == id,
+                          onSelected: (_) =>
+                              _aplicar(_com(modalidade: () => id)),
                         ),
-                      )
-                      .toList(),
+                      ),
+                  ],
                 ),
               ),
             ),
@@ -105,7 +173,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
               ),
             ),
             OutlinedButton.icon(
-              onPressed: _showFilters,
+              onPressed: () => _showFilters(refs),
               icon: const Icon(Icons.tune, size: 16),
               label: const Text('Filtros'),
             ),
@@ -115,41 +183,78 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         Wrap(
           spacing: 7,
           children: [
-            TagPill('$distance km'),
-            TagPill(category == 'Todas' ? 'Todas as categorias' : category),
-            TagPill(level == 'Todos' ? 'Todos os níveis' : level),
-            if (date.isNotEmpty) TagPill(date),
+            TagPill('${f.raioKm} km'),
+            TagPill(
+              _nome(
+                refs.categoriasEtarias,
+                f.idCategoriaEtaria,
+                'Todas as categorias',
+              ),
+            ),
+            TagPill(
+              _nome(refs.niveisTecnicos, f.idNivelTecnico, 'Todos os níveis'),
+            ),
+            if (dataTexto != null) TagPill(dataTexto),
           ],
         ),
         const SizedBox(height: 13),
-        Text(
-          '${results.length} jogos disponíveis · ${date.isEmpty ? 'Qualquer data' : date}',
-          style: const TextStyle(color: AppColors.muted, fontSize: 11),
+        FutureBuilder<List<AnuncioPartida>>(
+          future: _resultados,
+          builder: (context, snap) {
+            if (snap.connectionState != ConnectionState.done) {
+              return const Padding(
+                padding: EdgeInsets.all(30),
+                child: Center(
+                  child: CircularProgressIndicator(color: AppColors.green),
+                ),
+              );
+            }
+            if (snap.hasError) {
+              return ErroCarregamento(
+                mensagem: '${snap.error}',
+                onTentar: () => setState(() => _resultados = _buscar()),
+              );
+            }
+            final results = snap.data!;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${results.length} jogos disponíveis · ${dataTexto ?? 'Qualquer data'}',
+                  style: const TextStyle(color: AppColors.muted, fontSize: 11),
+                ),
+                const SizedBox(height: 10),
+                if (results.isEmpty)
+                  EmptyState(
+                    title: 'Nenhum rival por aqui. Ainda.',
+                    message: 'Amplie a distância ou tente outros filtros.',
+                    action: TextButton(
+                      onPressed: _clear,
+                      child: const Text('Limpar filtros'),
+                    ),
+                  ),
+                for (final anuncio in results)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 11),
+                    child: AnuncioCard(
+                      anuncio: anuncio,
+                      onTap: () => widget.onSelectAnuncio(anuncio),
+                    ),
+                  ),
+              ],
+            );
+          },
         ),
-        const SizedBox(height: 10),
-        if (results.isEmpty)
-          EmptyState(
-            title: 'Nenhum rival por aqui. Ainda.',
-            message: 'Amplie a distância ou tente outros filtros.',
-            action: TextButton(
-              onPressed: _clear,
-              child: const Text('Limpar filtros'),
-            ),
-          ),
-        for (final game in results)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 11),
-            child: GameCard(game: game, onTap: () => widget.onSelectGame(game)),
-          ),
       ],
     );
   }
 
-  Future<void> _showFilters() async {
-    var draftCategory = category,
-        draftLevel = level,
-        draftDistance = distance,
-        draftDate = date;
+  Future<void> _showFilters(Referencias refs) async {
+    int? draftCategoria = f.idCategoriaEtaria, draftNivel = f.idNivelTecnico;
+    var draftRaio = f.raioKm;
+    final dataController = TextEditingController(
+      text: f.data == null ? '' : Formatos.dataNumerica(f.data!),
+    );
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -174,68 +279,79 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
               TextField(
                 decoration: const InputDecoration(
                   labelText: 'Data disponível',
-                  hintText: 'Ex.: 18 ou 19',
+                  hintText: 'Ex.: 18/07/2026',
                 ),
-                controller: TextEditingController(text: draftDate),
-                onChanged: (v) => draftDate = v,
+                keyboardType: TextInputType.datetime,
+                controller: dataController,
               ),
               const SizedBox(height: 10),
-              DropdownButtonFormField(
-                initialValue: draftDistance,
+              DropdownButtonFormField<int>(
+                initialValue: draftRaio,
                 decoration: const InputDecoration(
                   labelText: 'Raio de distância',
                 ),
-                items: ['5', '10', '25', '50', '100']
+                items: _raios
                     .map(
                       (v) => DropdownMenuItem(value: v, child: Text('$v km')),
                     )
                     .toList(),
-                onChanged: (v) => update(() => draftDistance = v ?? '25'),
+                onChanged: (v) => update(() => draftRaio = v ?? 25),
               ),
               const SizedBox(height: 10),
-              DropdownButtonFormField(
-                initialValue: draftCategory,
+              DropdownButtonFormField<int?>(
+                initialValue: draftCategoria,
                 decoration: const InputDecoration(labelText: 'Categoria'),
-                items:
-                    ['Todas', 'Livre', 'Sub-15', 'Sub-17', 'Sub-20', 'Veterano']
-                        .map((v) => DropdownMenuItem(value: v, child: Text(v)))
-                        .toList(),
-                onChanged: (v) => update(() => draftCategory = v ?? 'Todas'),
+                items: [
+                  const DropdownMenuItem(value: null, child: Text('Todas')),
+                  for (final c in refs.categoriasEtarias)
+                    DropdownMenuItem(value: c.id, child: Text(c.nome)),
+                ],
+                onChanged: (v) => update(() => draftCategoria = v),
               ),
               const SizedBox(height: 10),
-              DropdownButtonFormField(
-                initialValue: draftLevel,
+              DropdownButtonFormField<int?>(
+                initialValue: draftNivel,
                 decoration: const InputDecoration(labelText: 'Nível do time'),
-                items: ['Todos', 'Recreativo', 'Intermediário', 'Avançado']
-                    .map((v) => DropdownMenuItem(value: v, child: Text(v)))
-                    .toList(),
-                onChanged: (v) => update(() => draftLevel = v ?? 'Todos'),
+                items: [
+                  const DropdownMenuItem(value: null, child: Text('Todos')),
+                  for (final n in refs.niveisTecnicos)
+                    DropdownMenuItem(value: n.id, child: Text(n.nome)),
+                ],
+                onChanged: (v) => update(() => draftNivel = v),
               ),
               const SizedBox(height: 14),
               Row(
                 children: [
                   TextButton(
                     onPressed: () {
-                      setState(() {
-                        category = 'Todas';
-                        level = 'Todos';
-                        distance = '25';
-                        date = '';
-                      });
                       Navigator.pop(context);
+                      _aplicar(
+                        _com(
+                          categoria: () => null,
+                          nivel: () => null,
+                          raio: 25,
+                          data: () => null,
+                        ),
+                      );
                     },
                     child: const Text('Limpar filtros'),
                   ),
                   const Spacer(),
                   FilledButton(
                     onPressed: () {
-                      setState(() {
-                        category = draftCategory;
-                        level = draftLevel;
-                        distance = draftDistance;
-                        date = draftDate;
-                      });
+                      final data = Formatos.lerDataHora(
+                        dataController.text,
+                        '00:00',
+                      );
                       Navigator.pop(context);
+                      _aplicar(
+                        _com(
+                          categoria: () => draftCategoria,
+                          nivel: () => draftNivel,
+                          raio: draftRaio,
+                          data: () => data,
+                        ),
+                      );
                     },
                     child: const Text('Aplicar filtros'),
                   ),
@@ -246,16 +362,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         ),
       ),
     );
+    dataController.dispose();
   }
 
   void _clear() {
-    setState(() {
-      category = 'Todas';
-      level = 'Todos';
-      distance = '25';
-      date = '';
-    });
-    widget.onQuery('');
-    widget.onSport('Todos');
+    texto.clear();
+    _aplicar(const FiltrosBusca());
   }
 }

@@ -1,283 +1,420 @@
 import 'package:flutter/material.dart';
-import '../models/game.dart';
-import '../repositories/mock_repository.dart';
+import 'package:flutter/services.dart';
+import '../core/formatters.dart';
+import '../models/anuncio_partida.dart';
+import '../models/notificacao.dart';
+import '../models/partida.dart';
+import '../models/referencia.dart';
+import '../models/usuario.dart';
+import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/carregador.dart';
 import '../widgets/common.dart';
+
+void _avisar(BuildContext context, String mensagem) =>
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(mensagem),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
+    );
 
 class AdsScreen extends StatelessWidget {
   const AdsScreen({
     super.key,
-    required this.ads,
     required this.onCreate,
+    required this.onEdit,
+    required this.onConversations,
+  });
+  final VoidCallback onCreate, onConversations;
+  final ValueChanged<AnuncioPartida> onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final repo = AppScope.repos(context).anuncios;
+    return Carregador<List<AnuncioPartida>>(
+      carregar: repo.listarDoMeuTime,
+      builder: (context, ads, recarregar) => ListView(
+        padding: const EdgeInsets.fromLTRB(18, 22, 18, 26),
+        children: [
+          const PageTitle(
+            'Seus anúncios, suas próximas partidas.',
+            subtitle:
+                'Gerencie seus jogos e encontre quem está pronto para jogar.',
+          ),
+          ActionButton('Novo anúncio', icon: Icons.add, onPressed: onCreate),
+          const SizedBox(height: 12),
+          if (ads.isEmpty)
+            EmptyState(
+              title: 'Seu próximo jogo começa aqui.',
+              message: 'Você ainda não publicou um anúncio.',
+              action: ActionButton('Anunciar jogo', onPressed: onCreate),
+            ),
+          for (final ad in ads)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: _AnuncioPainel(
+                ad: ad,
+                onEdit: () => onEdit(ad),
+                onToggle: () async {
+                  try {
+                    await repo.alterarStatus(
+                      ad.id,
+                      ad.status == StatusAnuncio.pausado
+                          ? StatusAnuncio.ativo
+                          : StatusAnuncio.pausado,
+                    );
+                    recarregar();
+                  } catch (e) {
+                    if (context.mounted) _avisar(context, '$e');
+                  }
+                },
+                onDelete: () => _excluir(context, ad, recarregar),
+                onConversations: onConversations,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _excluir(
+    BuildContext context,
+    AnuncioPartida ad,
+    VoidCallback recarregar,
+  ) async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Excluir este anúncio?'),
+        content: const Text(
+          'Esta ação não pode ser desfeita. Os interessados não poderão mais encontrar este jogo.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Agora não'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Sim, excluir'),
+          ),
+        ],
+      ),
+    );
+    if (yes != true || !context.mounted) return;
+    try {
+      await AppScope.repos(context).anuncios.excluir(ad.id);
+      recarregar();
+      if (context.mounted) _avisar(context, 'Anúncio excluído.');
+    } catch (e) {
+      if (context.mounted) _avisar(context, '$e');
+    }
+  }
+}
+
+class _AnuncioPainel extends StatelessWidget {
+  const _AnuncioPainel({
+    required this.ad,
     required this.onEdit,
     required this.onToggle,
     required this.onDelete,
     required this.onConversations,
   });
-  final List<String> ads;
-  final VoidCallback onCreate, onConversations;
-  final ValueChanged<int> onEdit, onToggle, onDelete;
+  final AnuncioPartida ad;
+  final VoidCallback onEdit, onToggle, onDelete, onConversations;
+
   @override
-  Widget build(BuildContext context) => ListView(
-    padding: const EdgeInsets.fromLTRB(18, 22, 18, 26),
-    children: [
-      const PageTitle(
-        'Seus anúncios, suas próximas partidas.',
-        subtitle: 'Gerencie seus jogos e encontre quem está pronto para jogar.',
-      ),
-      ActionButton('Novo anúncio', icon: Icons.add, onPressed: onCreate),
-      const SizedBox(height: 12),
-      if (ads.isEmpty)
-        EmptyState(
-          title: 'Seu próximo jogo começa aqui.',
-          message: 'Você ainda não publicou um anúncio.',
-          action: ActionButton('Anunciar jogo', onPressed: onCreate),
-        ),
-      for (var i = 0; i < ads.length; i++)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Panel(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+  Widget build(BuildContext context) {
+    final pausado = ad.status == StatusAnuncio.pausado;
+    return Panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Crest(label: ad.time.siglaExibicao, small: true),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Crest(small: true),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            ads[i].split('|').first,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 13,
-                            ),
-                          ),
-                          const Text(
-                            'Futebol · Livre · São Paulo, SP',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: AppColors.muted,
-                            ),
-                          ),
-                        ],
+                    Text(
+                      '${ad.time.nome} · ${Formatos.dataCurta(ad.dataHoraInicio)} · ${Formatos.hora(ad.dataHoraInicio)}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
                       ),
                     ),
-                    TagPill(
-                      ads[i].contains('|Pausado') ? 'Pausado' : 'Ativo',
-                      green: !ads[i].contains('|Pausado'),
-                    ),
-                  ],
-                ),
-                const Divider(height: 20),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 5,
-                  children: [
-                    TextButton.icon(
-                      onPressed: () => onEdit(i),
-                      icon: const Icon(Icons.edit_outlined, size: 15),
-                      label: const Text('Editar'),
-                    ),
-                    TextButton(
-                      onPressed: () => onToggle(i),
-                      child: Text(
-                        ads[i].contains('|Pausado')
-                            ? 'Reativar anúncio'
-                            : 'Pausar anúncio',
-                      ),
-                    ),
-                    TextButton.icon(
-                      onPressed: onConversations,
-                      icon: const Icon(Icons.person_outline, size: 15),
-                      label: const Text('Interessados · 2'),
-                    ),
-                    TextButton.icon(
-                      onPressed: () => onDelete(i),
-                      icon: const Icon(
-                        Icons.delete_outline,
-                        size: 15,
-                        color: Colors.red,
-                      ),
-                      label: const Text(
-                        'Excluir',
-                        style: TextStyle(color: Colors.red),
+                    Text(
+                      '${ad.modalidade.nome} · ${ad.categoriaEtaria.nome} · ${ad.localExibicao}',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: AppColors.muted,
                       ),
                     ),
                   ],
                 ),
-              ],
-            ),
+              ),
+              TagPill(
+                ad.status.rotulo,
+                green: ad.status == StatusAnuncio.ativo,
+              ),
+            ],
           ),
-        ),
-    ],
-  );
+          const Divider(height: 20),
+          Wrap(
+            spacing: 6,
+            runSpacing: 5,
+            children: [
+              TextButton.icon(
+                onPressed: onEdit,
+                icon: const Icon(Icons.edit_outlined, size: 15),
+                label: const Text('Editar'),
+              ),
+              if (ad.status == StatusAnuncio.ativo || pausado)
+                TextButton(
+                  onPressed: onToggle,
+                  child: Text(pausado ? 'Reativar anúncio' : 'Pausar anúncio'),
+                ),
+              TextButton.icon(
+                onPressed: onConversations,
+                icon: const Icon(Icons.person_outline, size: 15),
+                label: Text('Interessados · ${ad.totalSolicitacoes}'),
+              ),
+              TextButton.icon(
+                onPressed: onDelete,
+                icon: const Icon(
+                  Icons.delete_outline,
+                  size: 15,
+                  color: Colors.red,
+                ),
+                label: const Text(
+                  'Excluir',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({
     super.key,
-    required this.teamName,
     required this.onEdit,
     required this.onGames,
     required this.onLogout,
   });
-  final String teamName;
   final VoidCallback onEdit, onGames, onLogout;
+
   @override
-  Widget build(BuildContext context) => ListView(
-    padding: const EdgeInsets.fromLTRB(18, 22, 18, 26),
-    children: [
-      const PageTitle(
-        'Seu time. Sua identidade.',
-        subtitle: 'Dentro e fora de campo, esse é o seu cartão de visita.',
+  Widget build(BuildContext context) {
+    final app = AppScope.of(context);
+    final time = app.time!;
+    final repos = app.repositorios;
+    return Carregador<(List<Partida>, List<AvaliacaoRecebida>)>(
+      carregar: () async => (
+        (await repos.partidas.listarDoMeuTime())
+            .where((p) => p.status == StatusPartida.realizada)
+            .toList(),
+        await repos.partidas.avaliacoesDoTime(time.id),
       ),
-      Container(
-        height: 84,
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          color: AppColors.forest,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const CustomPaint(
-          painter: PitchLinesPainter(),
-          size: Size.infinite,
-        ),
-      ),
-      Transform.translate(
-        offset: const Offset(0, -20),
-        child: Panel(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Crest(),
-                  const SizedBox(width: 11),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+      builder: (context, dados, _) {
+        final (historico, avaliacoes) = dados;
+        final avaliacao = avaliacoes.firstOrNull;
+        final local = [
+          time.localExibicao,
+          if (time.anoFundacao != null) 'Desde ${time.anoFundacao}',
+        ].join(' · ');
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(18, 22, 18, 26),
+          children: [
+            const PageTitle(
+              'Seu time. Sua identidade.',
+              subtitle:
+                  'Dentro e fora de campo, esse é o seu cartão de visita.',
+            ),
+            Container(
+              height: 84,
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                color: AppColors.forest,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const CustomPaint(
+                painter: PitchLinesPainter(),
+                size: Size.infinite,
+              ),
+            ),
+            Transform.translate(
+              offset: const Offset(0, -20),
+              child: Panel(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
                       children: [
-                        Text(
-                          teamName,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 19,
+                        Crest(label: time.siglaExibicao, ano: time.anoFundacao),
+                        const SizedBox(width: 11),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                time.nome,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 19,
+                                ),
+                              ),
+                              Text(
+                                '⌖  $local',
+                                style: const TextStyle(
+                                  color: AppColors.muted,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        const Text(
-                          '⌖  São Paulo, SP · Desde 2015',
-                          style: TextStyle(
-                            color: AppColors.muted,
-                            fontSize: 11,
+                        IconButton(
+                          onPressed: onEdit,
+                          icon: const Icon(
+                            Icons.edit_outlined,
+                            color: AppColors.green,
                           ),
                         ),
                       ],
                     ),
-                  ),
-                  IconButton(
-                    onPressed: onEdit,
-                    icon: const Icon(
-                      Icons.edit_outlined,
-                      color: AppColors.green,
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final m in time.modalidades)
+                          TagPill(m.nome, green: true),
+                        if (time.categoriaEtaria != null)
+                          TagPill(time.categoriaEtaria!.nome),
+                        if (time.nivelTecnico != null)
+                          TagPill(time.nivelTecnico!.nome),
+                        TagPill('${time.quantidadeJogadores} jogadores'),
+                      ],
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              const Wrap(
-                spacing: 6,
-                children: [
-                  TagPill('Futebol', green: true),
-                  TagPill('Livre'),
-                  TagPill('Intermediário'),
-                ],
-              ),
-              const Divider(height: 24),
-              const Text(
-                'Mais que um time, uma família.',
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'Desde 2015, reunimos amigos que compartilham a paixão pelo futebol. Jogamos com raça, respeito e aquela resenha que não pode faltar. Estamos sempre prontos para um bom amistoso!',
-                style: TextStyle(
-                  color: AppColors.muted,
-                  fontSize: 12,
-                  height: 1.55,
+                    const Divider(height: 24),
+                    const Text(
+                      'Sobre o time',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      (time.descricao?.trim().isNotEmpty ?? false)
+                          ? time.descricao!
+                          : 'Conte a história do seu time para os adversários.',
+                      style: const TextStyle(
+                        color: AppColors.muted,
+                        fontSize: 12,
+                        height: 1.55,
+                      ),
+                    ),
+                    const SizedBox(height: 15),
+                    Text(
+                      [
+                        'Responsável   ${time.nomeCapitao ?? app.usuario!.nome}',
+                        if (time.telefoneContato != null)
+                          'Contato           ${time.telefoneContato}',
+                      ].join('\n'),
+                      style: const TextStyle(fontSize: 11, height: 1.8),
+                    ),
+                    const Divider(height: 22),
+                    const Text(
+                      'Histórico de jogos',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 8),
+                    if (historico.isEmpty)
+                      const Text(
+                        'Nenhuma partida realizada ainda.',
+                        style: TextStyle(fontSize: 10, color: AppColors.muted),
+                      ),
+                    for (final p in historico.take(2)) ...[
+                      Text(
+                        '${time.nome}   ${p.placarPara(time.id)}   ${p.adversarioDe(time.id).nome}     ${Formatos.dataHistorico(p.dataHoraInicio)}',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: AppColors.muted,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                    ],
+                    const SizedBox(height: 11),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _ProfileStat(
+                            value: '${time.totalPartidasRealizadas}',
+                            label: 'Jogos realizados',
+                          ),
+                        ),
+                        Expanded(
+                          child: _ProfileStat(
+                            value: time.mediaAvaliacao == null
+                                ? '–'
+                                : '${Formatos.decimal(time.mediaAvaliacao!)} ★',
+                            label: 'Avaliação geral',
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (avaliacao != null) ...[
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Quem já jogou com a gente',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 7),
+                      Text(
+                        '${'★' * avaliacao.notaMedia.round()}${avaliacao.comentario == null ? '' : '\n“${avaliacao.comentario}”'}',
+                        style: const TextStyle(
+                          color: AppColors.green,
+                          fontSize: 12,
+                          height: 1.5,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 14),
+                    ActionButton(
+                      'Ver todos os jogos',
+                      icon: Icons.arrow_forward,
+                      outline: true,
+                      expand: true,
+                      onPressed: onGames,
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: onLogout,
+                      icon: const Icon(Icons.logout, size: 16),
+                      label: const Text('Sair da conta'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.muted,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 15),
-              const Text(
-                'Responsável   João Silva\nContato           (11) 99999-1234',
-                style: TextStyle(fontSize: 11, height: 1.8),
-              ),
-              const Divider(height: 22),
-              const Text(
-                'Histórico de jogos',
-                style: TextStyle(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '$teamName   2 × 1   Real Amigos FC     11 jul 2026',
-                style: const TextStyle(fontSize: 10, color: AppColors.muted),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '$teamName   1 × 1   Atlético da Zona Sul    4 jul 2026',
-                style: const TextStyle(fontSize: 10, color: AppColors.muted),
-              ),
-              const SizedBox(height: 15),
-              const Row(
-                children: [
-                  Expanded(
-                    child: _ProfileStat(value: '18', label: 'Jogos realizados'),
-                  ),
-                  Expanded(
-                    child: _ProfileStat(
-                      value: '4,9 ★',
-                      label: 'Avaliação geral',
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'Quem já jogou com a gente',
-                style: TextStyle(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 7),
-              const Text(
-                '★★★★★\n“Time pontual, organizado e com muito respeito em campo. Bora marcar a próxima!”',
-                style: TextStyle(
-                  color: AppColors.green,
-                  fontSize: 12,
-                  height: 1.5,
-                ),
-              ),
-              const SizedBox(height: 14),
-              ActionButton(
-                'Ver todos os jogos',
-                icon: Icons.arrow_forward,
-                outline: true,
-                expand: true,
-                onPressed: onGames,
-              ),
-              const SizedBox(height: 8),
-              TextButton.icon(
-                onPressed: onLogout,
-                icon: const Icon(Icons.logout, size: 16),
-                label: const Text('Sair da conta'),
-                style: TextButton.styleFrom(foregroundColor: AppColors.muted),
-              ),
-            ],
-          ),
-        ),
-      ),
-    ],
-  );
+            ),
+          ],
+        );
+      },
+    );
+  }
 }
 
 class _ProfileStat extends StatelessWidget {
@@ -301,354 +438,423 @@ class _ProfileStat extends StatelessWidget {
 
 class NotificationsScreen extends StatelessWidget {
   const NotificationsScreen({super.key, required this.onOpen});
-  final ValueChanged<String> onOpen;
+  final ValueChanged<Notificacao> onOpen;
+
+  IconData _icone(TipoNotificacao t) => switch (t) {
+    TipoNotificacao.partidaConfirmada => Icons.check,
+    TipoNotificacao.mensagemRecebida ||
+    TipoNotificacao.solicitacaoRecebida => Icons.chat_bubble_outline,
+    _ => Icons.notifications_none,
+  };
+
   @override
-  Widget build(BuildContext context) => ListView(
-    padding: const EdgeInsets.fromLTRB(18, 22, 18, 26),
-    children: [
-      const PageTitle(
-        'O jogo não para.',
-        subtitle: 'Fique por dentro de tudo que acontece com o seu time.',
-      ),
-      Panel(
-        padding: EdgeInsets.zero,
-        child: Column(
-          children: [
-            for (var i = 0; i < MockRepository.notifications.length; i++) ...[
-              Builder(
-                builder: (context) {
-                  final n = MockRepository.notifications[i];
-                  return InkWell(
-                    onTap: () => onOpen(n.$4),
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
-                      child: Row(
-                        children: [
-                          CircleAvatar(
-                            backgroundColor: const Color(0xFFEAF4E8),
-                            child: Icon(
-                              n.$4 == 'confirmed'
-                                  ? Icons.check
-                                  : n.$4 == 'chat'
-                                  ? Icons.chat_bubble_outline
-                                  : Icons.notifications_none,
+  Widget build(BuildContext context) {
+    final repo = AppScope.repos(context).notificacoes;
+    return Carregador<List<Notificacao>>(
+      carregar: repo.listar,
+      builder: (context, lista, _) => ListView(
+        padding: const EdgeInsets.fromLTRB(18, 22, 18, 26),
+        children: [
+          const PageTitle(
+            'O jogo não para.',
+            subtitle: 'Fique por dentro de tudo que acontece com o seu time.',
+          ),
+          if (lista.isEmpty)
+            const EmptyState(
+              title: 'Tudo tranquilo por aqui.',
+              message: 'Avisaremos quando houver novidades do seu time.',
+            )
+          else
+            Panel(
+              padding: EdgeInsets.zero,
+              child: Column(
+                children: [
+                  for (var i = 0; i < lista.length; i++) ...[
+                    InkWell(
+                      onTap: () {
+                        if (!lista[i].lida) repo.marcarComoLida(lista[i].id);
+                        onOpen(lista[i]);
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Row(
+                          children: [
+                            CircleAvatar(
+                              backgroundColor: const Color(0xFFEAF4E8),
+                              child: Icon(
+                                _icone(lista[i].tipo),
+                                size: 18,
+                                color: AppColors.green,
+                              ),
+                            ),
+                            const SizedBox(width: 11),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    lista[i].titulo,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  Text(
+                                    lista[i].mensagem,
+                                    style: const TextStyle(
+                                      color: AppColors.muted,
+                                      fontSize: 10,
+                                      height: 1.45,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    Formatos.relativo(lista[i].dataCriacao),
+                                    style: const TextStyle(
+                                      color: AppColors.muted,
+                                      fontSize: 9,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Icon(
+                              Icons.chevron_right,
                               size: 18,
-                              color: AppColors.green,
+                              color: AppColors.muted,
                             ),
-                          ),
-                          const SizedBox(width: 11),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  n.$1,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                                Text(
-                                  n.$2,
-                                  style: const TextStyle(
-                                    color: AppColors.muted,
-                                    fontSize: 10,
-                                    height: 1.45,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  n.$3,
-                                  style: const TextStyle(
-                                    color: AppColors.muted,
-                                    fontSize: 9,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const Icon(
-                            Icons.chevron_right,
-                            size: 18,
-                            color: AppColors.muted,
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
-                  );
-                },
+                    if (i < lista.length - 1)
+                      const Divider(height: 1, indent: 14, endIndent: 14),
+                  ],
+                ],
               ),
-              if (i < MockRepository.notifications.length - 1)
-                const Divider(height: 1, indent: 14, endIndent: 14),
-            ],
-          ],
-        ),
+            ),
+        ],
       ),
-    ],
-  );
+    );
+  }
 }
 
+/// Mapa ilustrativo: os marcadores não usam coordenadas reais. Integração com
+/// mapa e geolocalização é decisão pendente.
 class MapScreen extends StatefulWidget {
-  const MapScreen({super.key, required this.games, required this.onSelect});
-  final List<Game> games;
-  final ValueChanged<Game> onSelect;
+  const MapScreen({super.key, required this.onSelect});
+  final ValueChanged<AnuncioPartida> onSelect;
   @override
   State<MapScreen> createState() => _MapScreenState();
 }
 
 class _MapScreenState extends State<MapScreen> {
-  late Game selected = widget.games.first;
+  AnuncioPartida? selected;
+
   @override
-  Widget build(BuildContext context) => ListView(
-    padding: const EdgeInsets.fromLTRB(18, 22, 18, 25),
-    children: [
-      const PageTitle(
-        'O futebol acontece perto de você.',
-        subtitle: 'Explore os campos, quadras e times da sua região.',
-      ),
-      Container(
-        height: 300,
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          color: const Color(0xFFE8EFE4),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Stack(
+  Widget build(BuildContext context) {
+    final app = AppScope.of(context);
+    return Carregador<List<AnuncioPartida>>(
+      carregar: () => app.repositorios.anuncios.buscar(const FiltroAnuncios()),
+      builder: (context, anuncios, _) {
+        final atual = anuncios.contains(selected)
+            ? selected
+            : anuncios.firstOrNull;
+        final marcadores = anuncios.take(5).toList();
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(18, 22, 18, 25),
           children: [
-            Positioned(
-              left: 40,
-              right: 25,
-              top: 80,
-              child: Transform.rotate(
-                angle: -.2,
-                child: Container(height: 20, color: Colors.white),
-              ),
+            const PageTitle(
+              'O futebol acontece perto de você.',
+              subtitle: 'Explore os campos, quadras e times da sua região.',
             ),
-            Positioned(
-              left: -30,
-              right: -20,
-              top: 180,
-              child: Transform.rotate(
-                angle: .12,
-                child: Container(height: 24, color: Colors.white),
+            Container(
+              height: 300,
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                color: const Color(0xFFE8EFE4),
+                borderRadius: BorderRadius.circular(12),
               ),
-            ),
-            Positioned(
-              left: 65,
-              top: 35,
-              child: const Text(
-                'VILA MARIANA',
-                style: TextStyle(
-                  fontSize: 9,
-                  color: AppColors.muted,
-                  letterSpacing: 1,
-                ),
-              ),
-            ),
-            Positioned(
-              right: 23,
-              top: 128,
-              child: const Text(
-                'IBIRAPUERA',
-                style: TextStyle(
-                  fontSize: 9,
-                  color: AppColors.muted,
-                  letterSpacing: 1,
-                ),
-              ),
-            ),
-            Positioned(
-              left: 22,
-              top: 145,
-              child: const Chip(
-                avatar: Icon(Icons.my_location, size: 14),
-                label: Text('Você está aqui', style: TextStyle(fontSize: 9)),
-              ),
-            ),
-            for (var i = 0; i < widget.games.length; i++)
-              Positioned(
-                left: 35.0 + i * 65,
-                top: 80.0 + (i % 2) * 95,
-                child: GestureDetector(
-                  onTap: () => setState(() => selected = widget.games[i]),
-                  child: CircleAvatar(
-                    backgroundColor: AppColors.forest,
-                    child: Text('⚽', style: const TextStyle(fontSize: 17)),
+              child: Stack(
+                children: [
+                  Positioned(
+                    left: 40,
+                    right: 25,
+                    top: 80,
+                    child: Transform.rotate(
+                      angle: -.2,
+                      child: Container(height: 20, color: Colors.white),
+                    ),
                   ),
-                ),
-              ),
-            const Positioned(
-              left: 10,
-              bottom: 10,
-              child: Text(
-                'Mapa ilustrativo · São Paulo, SP',
-                style: TextStyle(fontSize: 9, color: AppColors.muted),
+                  Positioned(
+                    left: -30,
+                    right: -20,
+                    top: 180,
+                    child: Transform.rotate(
+                      angle: .12,
+                      child: Container(height: 24, color: Colors.white),
+                    ),
+                  ),
+                  const Positioned(
+                    left: 22,
+                    top: 145,
+                    child: Chip(
+                      avatar: Icon(Icons.my_location, size: 14),
+                      label: Text(
+                        'Você está aqui',
+                        style: TextStyle(fontSize: 9),
+                      ),
+                    ),
+                  ),
+                  for (var i = 0; i < marcadores.length; i++)
+                    Positioned(
+                      left: 35.0 + i * 65,
+                      top: 80.0 + (i % 2) * 95,
+                      child: GestureDetector(
+                        onTap: () => setState(() => selected = marcadores[i]),
+                        child: const CircleAvatar(
+                          backgroundColor: AppColors.forest,
+                          child: Text('⚽', style: TextStyle(fontSize: 17)),
+                        ),
+                      ),
+                    ),
+                  Positioned(
+                    left: 10,
+                    bottom: 10,
+                    child: Text(
+                      'Mapa ilustrativo · ${app.time!.localExibicao}',
+                      style: const TextStyle(
+                        fontSize: 9,
+                        color: AppColors.muted,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
+            const SizedBox(height: 13),
+            if (atual == null)
+              const EmptyState(
+                title: 'Nenhum rival por aqui. Ainda.',
+                message:
+                    'Assim que novos jogos forem anunciados, eles aparecem aqui.',
+              )
+            else ...[
+              Text(
+                'Perto de você · ${atual.time.nome}',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(height: 8),
+              AnuncioCard(anuncio: atual, onTap: () => widget.onSelect(atual)),
+              for (final g in anuncios.where((g) => g.id != atual.id).take(2))
+                ListTile(
+                  leading: Crest(label: g.time.siglaExibicao, small: true),
+                  title: Text(
+                    g.time.nome,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  subtitle: Text(
+                    [
+                      if (g.distanciaKm != null)
+                        Formatos.distancia(g.distanciaKm!),
+                      g.modalidade.nome,
+                    ].join(' · '),
+                    style: const TextStyle(fontSize: 10),
+                  ),
+                  onTap: () => setState(() => selected = g),
+                ),
+            ],
           ],
-        ),
-      ),
-      const SizedBox(height: 13),
-      Text(
-        'Perto de você · ${selected.name}',
-        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
-      ),
-      const SizedBox(height: 8),
-      GameCard(game: selected, onTap: () => widget.onSelect(selected)),
-      for (final g in widget.games.where((g) => g.id != selected.id).take(2))
-        ListTile(
-          leading: Crest(label: g.crest, small: true),
-          title: Text(
-            g.name,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-          ),
-          subtitle: Text(
-            '${g.distance} · ${g.sport}',
-            style: const TextStyle(fontSize: 10),
-          ),
-          onTap: () => setState(() => selected = g),
-        ),
-    ],
-  );
+        );
+      },
+    );
+  }
 }
 
 class ConfirmationScreen extends StatelessWidget {
   const ConfirmationScreen({
     super.key,
-    required this.game,
-    required this.teamName,
+    required this.idPartida,
     required this.onChat,
     required this.onCancel,
   });
-  final Game game;
-  final String teamName;
-  final VoidCallback onChat, onCancel;
+  final String idPartida;
+  final ValueChanged<String> onChat;
+  final ValueChanged<Partida> onCancel;
+
   @override
-  Widget build(BuildContext context) => ListView(
-    padding: const EdgeInsets.fromLTRB(18, 28, 18, 28),
-    children: [
-      const Icon(Icons.check_circle, color: AppColors.green, size: 52),
-      const SizedBox(height: 9),
-      const Text(
-        'AGORA É SÓ ENTRAR EM CAMPO',
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: AppColors.muted,
-          fontSize: 9,
-          letterSpacing: 1.2,
-          fontWeight: FontWeight.w800,
-        ),
-      ),
-      const SizedBox(height: 5),
-      const Text(
-        'Partida confirmada!',
-        textAlign: TextAlign.center,
-        style: TextStyle(fontSize: 23, fontWeight: FontWeight.w800),
-      ),
-      const SizedBox(height: 4),
-      const Text(
-        'Chame a equipe. Seu próximo jogo já tem dia e hora.',
-        textAlign: TextAlign.center,
-        style: TextStyle(color: AppColors.muted, fontSize: 11),
-      ),
-      const SizedBox(height: 18),
-      Panel(
-        child: Column(
+  Widget build(BuildContext context) {
+    final app = AppScope.of(context);
+    final meuTime = app.time!;
+    return Carregador<Partida>(
+      carregar: () => app.repositorios.partidas.obter(idPartida),
+      builder: (context, partida, _) {
+        final adversario = partida.adversarioDe(meuTime.id);
+        final cancelada = partida.status == StatusPartida.cancelada;
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(18, 28, 18, 28),
           children: [
-            const TagPill('Amistoso · Futebol', green: true),
-            const SizedBox(height: 17),
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
+            Icon(
+              cancelada ? Icons.cancel : Icons.check_circle,
+              color: cancelada ? AppColors.muted : AppColors.green,
+              size: 52,
+            ),
+            const SizedBox(height: 9),
+            Text(
+              switch (partida.status) {
+                StatusPartida.confirmada => 'AGORA É SÓ ENTRAR EM CAMPO',
+                StatusPartida.realizada => 'APITO FINAL',
+                StatusPartida.cancelada => 'PARTIDA CANCELADA',
+              },
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: AppColors.muted,
+                fontSize: 9,
+                letterSpacing: 1.2,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              switch (partida.status) {
+                StatusPartida.confirmada => 'Partida confirmada!',
+                StatusPartida.realizada => 'Partida realizada',
+                StatusPartida.cancelada => 'Partida cancelada',
+              },
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 4),
+            if (partida.status == StatusPartida.confirmada)
+              const Text(
+                'Chame a equipe. Seu próximo jogo já tem dia e hora.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppColors.muted, fontSize: 11),
+              ),
+            const SizedBox(height: 18),
+            Panel(
+              child: Column(
+                children: [
+                  TagPill('Amistoso · ${partida.modalidade.nome}', green: true),
+                  const SizedBox(height: 17),
+                  Row(
                     children: [
-                      const Crest(),
-                      Text(
-                        teamName,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 11,
+                      Expanded(
+                        child: Column(
+                          children: [
+                            Crest(label: meuTime.siglaExibicao),
+                            Text(
+                              meuTime.nome,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 11,
+                              ),
+                            ),
+                            Text(
+                              meuTime.localExibicao,
+                              style: const TextStyle(
+                                fontSize: 9,
+                                color: AppColors.muted,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       const Text(
-                        'São Paulo, SP',
-                        style: TextStyle(fontSize: 9, color: AppColors.muted),
-                      ),
-                    ],
-                  ),
-                ),
-                const Text(
-                  'VS',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.muted,
-                  ),
-                ),
-                Expanded(
-                  child: Column(
-                    children: [
-                      Crest(label: game.crest),
-                      Text(
-                        game.name,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 11,
-                        ),
-                      ),
-                      Text(
-                        game.city,
-                        style: const TextStyle(
-                          fontSize: 9,
+                        'VS',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
                           color: AppColors.muted,
                         ),
                       ),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            Crest(label: adversario.siglaExibicao),
+                            Text(
+                              adversario.nome,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 11,
+                              ),
+                            ),
+                            Text(
+                              adversario.localExibicao,
+                              style: const TextStyle(
+                                fontSize: 9,
+                                color: AppColors.muted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
-                ),
-              ],
-            ),
-            const Divider(height: 24),
-            _Info(
-              icon: Icons.calendar_today_outlined,
-              label: 'Data',
-              value: '${game.date} de 2026',
-            ),
-            _Info(icon: Icons.access_time, label: 'Horário', value: game.time),
-            _Info(
-              icon: Icons.place_outlined,
-              label: 'Local',
-              value:
-                  '${game.place}\nAv. República do Líbano, 1111 · São Paulo, SP',
-            ),
-            const SizedBox(height: 8),
-            ActionButton(
-              'Abrir localização',
-              outline: true,
-              icon: Icons.place_outlined,
-              expand: true,
-              onPressed: () {},
-            ),
-            const SizedBox(height: 8),
-            ActionButton(
-              'Conversar',
-              icon: Icons.chat_bubble_outline,
-              expand: true,
-              onPressed: onChat,
-            ),
-            TextButton(
-              onPressed: onCancel,
-              child: const Text(
-                'Cancelar partida',
-                style: TextStyle(color: Colors.red, fontSize: 11),
+                  const Divider(height: 24),
+                  _Info(
+                    icon: Icons.calendar_today_outlined,
+                    label: 'Data',
+                    value: Formatos.dataComAno(partida.dataHoraInicio),
+                  ),
+                  _Info(
+                    icon: Icons.access_time,
+                    label: 'Horário',
+                    value: Formatos.hora(partida.dataHoraInicio),
+                  ),
+                  _Info(
+                    icon: Icons.place_outlined,
+                    label: 'Local',
+                    value: [
+                      partida.nomeLocal,
+                      [
+                        if (partida.endereco != null) partida.endereco!,
+                        '${partida.cidade}, ${partida.siglaEstado}',
+                      ].join(' · '),
+                    ].join('\n'),
+                  ),
+                  const SizedBox(height: 8),
+                  ActionButton(
+                    'Abrir localização',
+                    outline: true,
+                    icon: Icons.place_outlined,
+                    expand: true,
+                    // Pendente: abrir app de mapas (requer url_launcher).
+                    onPressed: () => _avisar(
+                      context,
+                      'Abrir no mapa estará disponível em breve.',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ActionButton(
+                    'Conversar',
+                    icon: Icons.chat_bubble_outline,
+                    expand: true,
+                    onPressed: () => onChat(partida.idSolicitacao),
+                  ),
+                  if (partida.status == StatusPartida.confirmada)
+                    TextButton(
+                      onPressed: () => onCancel(partida),
+                      child: const Text(
+                        'Cancelar partida',
+                        style: TextStyle(color: Colors.red, fontSize: 11),
+                      ),
+                    ),
+                ],
               ),
             ),
           ],
-        ),
-      ),
-    ],
-  );
+        );
+      },
+    );
+  }
 }
 
 class _Info extends StatelessWidget {
@@ -682,121 +888,146 @@ class _Info extends StatelessWidget {
 }
 
 class ReviewScreen extends StatefulWidget {
-  const ReviewScreen({super.key, required this.game, required this.onSubmit});
-  final Game game;
-  final VoidCallback onSubmit;
+  const ReviewScreen({
+    super.key,
+    required this.partida,
+    required this.onSubmit,
+  });
+  final Partida partida;
+  final Future<void> Function(NovaAvaliacao) onSubmit;
   @override
   State<ReviewScreen> createState() => _ReviewScreenState();
 }
 
 class _ReviewScreenState extends State<ReviewScreen> {
-  final ratings = <String, int>{};
+  final ratings = <int, int>{};
+  final comentario = TextEditingController();
+  bool enviando = false;
+
   @override
-  Widget build(BuildContext context) => ListView(
-    padding: const EdgeInsets.fromLTRB(18, 22, 18, 28),
-    children: [
-      const PageTitle(
-        'Como foi o jogo?',
-        subtitle:
-            'Sua avaliação ajuda a construir uma comunidade que joga junto.',
-      ),
-      Panel(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Crest(label: widget.game.crest),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.game.name,
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                      Text(
-                        '${widget.game.date} · ${widget.game.place}',
-                        style: const TextStyle(
-                          color: AppColors.muted,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            for (final label in [
-              'Pontualidade',
-              'Organização',
-              'Respeito',
-              'Estrutura do local',
-            ])
+  void dispose() {
+    comentario.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final app = AppScope.of(context);
+    final criterios = app.referencias.criteriosAvaliacao;
+    final adversario = widget.partida.adversarioDe(app.time!.id);
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(18, 22, 18, 28),
+      children: [
+        const PageTitle(
+          'Como foi o jogo?',
+          subtitle:
+              'Sua avaliação ajuda a construir uma comunidade que joga junto.',
+        ),
+        Panel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Row(
                 children: [
+                  Crest(label: adversario.siglaExibicao),
+                  const SizedBox(width: 10),
                   Expanded(
-                    child: Text(
-                      label,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          adversario.nome,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        Text(
+                          '${Formatos.dataCurta(widget.partida.dataHoraInicio)} · ${widget.partida.nomeLocal}',
+                          style: const TextStyle(
+                            color: AppColors.muted,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  for (var star = 1; star <= 5; star++)
-                    IconButton(
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 27),
-                      onPressed: () => setState(() => ratings[label] = star),
-                      icon: Icon(
-                        Icons.star,
-                        size: 21,
-                        color: (ratings[label] ?? 0) >= star
-                            ? const Color(0xFFF2B844)
-                            : const Color(0xFFDCE1DC),
-                      ),
-                    ),
                 ],
               ),
-            const SizedBox(height: 10),
-            TextField(
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Deixe um comentário',
-                hintText:
-                    'Conte como foi a experiência de jogar com esse time.',
-              ),
-            ),
-            const SizedBox(height: 12),
-            ActionButton(
-              'Enviar avaliação',
-              icon: Icons.star,
-              expand: true,
-              onPressed: () {
-                if (ratings.length < 4) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Avalie todos os critérios antes de enviar.',
+              const SizedBox(height: 12),
+              for (final criterio in criterios)
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        criterio.nome,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
-                  );
-                } else {
-                  widget.onSubmit();
-                }
-              },
-            ),
-          ],
+                    for (var star = 1; star <= 5; star++)
+                      IconButton(
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 27),
+                        onPressed: () =>
+                            setState(() => ratings[criterio.id] = star),
+                        icon: Icon(
+                          Icons.star,
+                          size: 21,
+                          color: (ratings[criterio.id] ?? 0) >= star
+                              ? const Color(0xFFF2B844)
+                              : const Color(0xFFDCE1DC),
+                        ),
+                      ),
+                  ],
+                ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: comentario,
+                maxLines: 3,
+                maxLength: 1000,
+                decoration: const InputDecoration(
+                  labelText: 'Deixe um comentário',
+                  hintText:
+                      'Conte como foi a experiência de jogar com esse time.',
+                ),
+              ),
+              const SizedBox(height: 12),
+              ActionButton(
+                enviando ? 'Enviando…' : 'Enviar avaliação',
+                icon: Icons.star,
+                expand: true,
+                onPressed: enviando ? null : () => _enviar(criterios),
+              ),
+            ],
+          ),
         ),
-      ),
-    ],
-  );
+      ],
+    );
+  }
+
+  Future<void> _enviar(List<ItemReferencia> criterios) async {
+    if (ratings.length < criterios.length) {
+      _avisar(context, 'Avalie todos os critérios antes de enviar.');
+      return;
+    }
+    setState(() => enviando = true);
+    try {
+      await widget.onSubmit(
+        NovaAvaliacao(
+          idPartida: widget.partida.id,
+          notas: Map.of(ratings),
+          comentario: comentario.text.trim().isEmpty
+              ? null
+              : comentario.text.trim(),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => enviando = false);
+    }
+  }
 }
 
-class AuthScreen extends StatelessWidget {
+class AuthScreen extends StatefulWidget {
   const AuthScreen({
     super.key,
     required this.page,
@@ -805,198 +1036,331 @@ class AuthScreen extends StatelessWidget {
   });
   final String page;
   final ValueChanged<String> onPage;
-  final VoidCallback onDone;
+
+  /// Chamado após sucesso com a mensagem a exibir.
+  final ValueChanged<String> onDone;
+  @override
+  State<AuthScreen> createState() => _AuthScreenState();
+}
+
+class _AuthScreenState extends State<AuthScreen> {
+  final form = GlobalKey<FormState>();
+  final nome = TextEditingController(),
+      telefone = TextEditingController(),
+      email = TextEditingController(),
+      senha = TextEditingController(),
+      nomeTime = TextEditingController(),
+      jogadores = TextEditingController(),
+      cidade = TextEditingController();
+  int? modalidade, categoria, nivel;
+  String? estado;
+  bool enviando = false;
+
+  static const _senhaMinima = 8;
+
+  @override
+  void dispose() {
+    for (final c in [
+      nome,
+      telefone,
+      email,
+      senha,
+      nomeTime,
+      jogadores,
+      cidade,
+    ]) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  String? _obrigatorio(String? v) =>
+      (v == null || v.trim().isEmpty) ? 'Campo obrigatório' : null;
+
+  String? _email(String? v) =>
+      RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(v?.trim() ?? '')
+      ? null
+      : 'Informe um e-mail válido';
+
   @override
   Widget build(BuildContext context) {
+    final page = widget.page;
+    final refs = AppScope.of(context).referencias;
     final title = page == 'login'
         ? 'Seu time em campo.'
         : page == 'forgot'
         ? 'Recupere seu acesso'
         : 'Vamos começar?';
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(22, 40, 22, 30),
-      children: [
-        const Center(child: BrandMark()),
-        const SizedBox(height: 38),
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: AppColors.forest,
-            borderRadius: BorderRadius.circular(13),
-          ),
-          child: const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'O próximo rival.\nA próxima história.',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 23,
-                  height: 1.2,
+    return Form(
+      key: form,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(22, 40, 22, 30),
+        children: [
+          const Center(child: BrandMark()),
+          const SizedBox(height: 38),
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: AppColors.forest,
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'O próximo rival.\nA próxima história.',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 23,
+                    height: 1.2,
+                  ),
                 ),
-              ),
-              SizedBox(height: 8),
-              Text(
-                'O futebol conecta. A gente dá o primeiro passe.',
-                style: TextStyle(color: Colors.white70, fontSize: 11),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 23),
-        Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
-        ),
-        const SizedBox(height: 5),
-        Text(
-          page == 'forgot'
-              ? 'Informe seu e-mail para receber um link de recuperação.'
-              : page == 'register'
-              ? 'Cadastre os dados do responsável e do seu time.'
-              : 'Entre e encontre o próximo adversário.',
-          style: const TextStyle(color: AppColors.muted, fontSize: 12),
-        ),
-        const SizedBox(height: 17),
-        if (page == 'register')
-          const TextField(
-            decoration: InputDecoration(
-              labelText: 'Nome do responsável',
-              hintText: 'Seu nome',
+                SizedBox(height: 8),
+                Text(
+                  'O futebol conecta. A gente dá o primeiro passe.',
+                  style: TextStyle(color: Colors.white70, fontSize: 11),
+                ),
+              ],
             ),
           ),
-        if (page == 'register') const SizedBox(height: 10),
-        if (page == 'register')
-          const TextField(
-            keyboardType: TextInputType.phone,
-            decoration: InputDecoration(
-              labelText: 'Telefone',
-              hintText: '(11) 99999-9999',
-            ),
+          const SizedBox(height: 23),
+          Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
           ),
-        if (page == 'register') const SizedBox(height: 10),
-        if (page != 'forgot')
-          const TextField(
-            decoration: InputDecoration(
+          const SizedBox(height: 5),
+          Text(
+            page == 'forgot'
+                ? 'Informe seu e-mail para receber um link de recuperação.'
+                : page == 'register'
+                ? 'Cadastre os dados do responsável e do seu time.'
+                : 'Entre e encontre o próximo adversário.',
+            style: const TextStyle(color: AppColors.muted, fontSize: 12),
+          ),
+          const SizedBox(height: 17),
+          if (page == 'register') ...[
+            TextFormField(
+              controller: nome,
+              decoration: const InputDecoration(
+                labelText: 'Nome do responsável',
+                hintText: 'Seu nome',
+              ),
+              validator: _obrigatorio,
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: telefone,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(
+                labelText: 'Telefone',
+                hintText: '(11) 99999-9999',
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+          TextFormField(
+            controller: email,
+            keyboardType: TextInputType.emailAddress,
+            autofillHints: const [AutofillHints.email],
+            decoration: const InputDecoration(
               labelText: 'E-mail',
               hintText: 'voce@email.com',
             ),
+            validator: _email,
           ),
-        if (page != 'forgot') const SizedBox(height: 10),
-        if (page == 'forgot')
-          const TextField(
-            decoration: InputDecoration(
-              labelText: 'E-mail',
-              hintText: 'voce@email.com',
+          if (page != 'forgot') ...[
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: senha,
+              obscureText: true,
+              autofillHints: const [AutofillHints.password],
+              decoration: const InputDecoration(
+                labelText: 'Senha',
+                hintText: 'Pelo menos $_senhaMinima caracteres',
+              ),
+              validator: (v) =>
+                  page == 'register' && (v ?? '').length < _senhaMinima
+                  ? 'A senha precisa de pelo menos $_senhaMinima caracteres'
+                  : (v ?? '').isEmpty
+                  ? 'Informe a senha'
+                  : null,
             ),
+          ],
+          if (page == 'register') ..._camposTime(refs),
+          if (page == 'login')
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () => widget.onPage('forgot'),
+                child: const Text('Esqueci minha senha'),
+              ),
+            )
+          else
+            const SizedBox(height: 14),
+          ActionButton(
+            enviando
+                ? 'Aguarde…'
+                : page == 'forgot'
+                ? 'Enviar link'
+                : page == 'register'
+                ? 'Criar perfil do time'
+                : 'Entrar',
+            icon: Icons.arrow_forward,
+            expand: true,
+            onPressed: enviando ? null : _enviar,
           ),
-        if (page != 'forgot')
-          const TextField(
-            obscureText: true,
-            decoration: InputDecoration(
-              labelText: 'Senha',
-              hintText: 'Pelo menos 6 caracteres',
+          const SizedBox(height: 8),
+          if (page == 'login')
+            OutlinedButton(
+              onPressed: () => _avisar(
+                context,
+                'O login com Google estará disponível na versão conectada.',
+              ),
+              child: const Text('G   Entrar com Google'),
             ),
-          ),
-        if (page == 'register') ...[
-          const SizedBox(height: 10),
-          const TextField(
-            decoration: InputDecoration(
-              labelText: 'Nome do time',
-              hintText: 'Ex.: União FC',
+          Center(
+            child: TextButton(
+              onPressed: () =>
+                  widget.onPage(page == 'register' ? 'login' : 'register'),
+              child: Text(
+                page == 'register'
+                    ? 'Já tem conta? Entrar'
+                    : 'Ainda não tem conta? Criar conta',
+              ),
             ),
-          ),
-          const SizedBox(height: 10),
-          DropdownButtonFormField<String>(
-            initialValue: 'Futebol',
-            decoration: const InputDecoration(labelText: 'Modalidade'),
-            items: [
-              'Futebol',
-              'Futsal',
-            ].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
-            onChanged: (_) {},
-          ),
-          const SizedBox(height: 10),
-          DropdownButtonFormField<String>(
-            initialValue: 'Livre',
-            decoration: const InputDecoration(labelText: 'Categoria'),
-            items: [
-              'Livre',
-              'Sub-15',
-              'Sub-17',
-              'Sub-20',
-              'Veterano',
-            ].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
-            onChanged: (_) {},
-          ),
-          const SizedBox(height: 10),
-          const TextField(
-            decoration: InputDecoration(
-              labelText: 'Cidade',
-              hintText: 'São Paulo',
-            ),
-          ),
-          const SizedBox(height: 10),
-          DropdownButtonFormField<String>(
-            initialValue: 'SP',
-            decoration: const InputDecoration(labelText: 'Estado'),
-            items: [
-              'SP',
-              'RJ',
-              'MG',
-              'PR',
-              'RS',
-              'SC',
-              'BA',
-              'PE',
-              'CE',
-              'DF',
-            ].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
-            onChanged: (_) {},
           ),
         ],
-        if (page == 'login')
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: () => onPage('forgot'),
-              child: const Text('Esqueci minha senha'),
-            ),
-          ),
-        ActionButton(
-          page == 'forgot'
-              ? 'Enviar link'
-              : page == 'register'
-              ? 'Criar perfil do time'
-              : 'Entrar',
-          icon: Icons.arrow_forward,
-          expand: true,
-          onPressed: onDone,
-        ),
-        const SizedBox(height: 8),
-        if (page == 'login')
-          OutlinedButton(
-            onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'O login com Google estará disponível na versão conectada.',
-                ),
-              ),
-            ),
-            child: const Text('G   Entrar com Google'),
-          ),
-        Center(
-          child: TextButton(
-            onPressed: () => onPage(page == 'register' ? 'login' : 'register'),
-            child: Text(
-              page == 'register'
-                  ? 'Já tem conta? Entrar'
-                  : 'Ainda não tem conta? Criar conta',
-            ),
-          ),
-        ),
-      ],
+      ),
     );
+  }
+
+  List<Widget> _camposTime(Referencias refs) {
+    DropdownButtonFormField<int> dropdown(
+      String label,
+      List<ItemReferencia> itens,
+      int? valor,
+      ValueChanged<int?> onChanged, {
+      bool obrigatorio = true,
+    }) => DropdownButtonFormField<int>(
+      initialValue: valor,
+      decoration: InputDecoration(labelText: label),
+      items: itens
+          .map((v) => DropdownMenuItem(value: v.id, child: Text(v.nome)))
+          .toList(),
+      onChanged: (v) => setState(() => onChanged(v)),
+      validator: (v) => obrigatorio && v == null ? 'Selecione uma opção' : null,
+    );
+    return [
+      const SizedBox(height: 10),
+      TextFormField(
+        controller: nomeTime,
+        decoration: const InputDecoration(
+          labelText: 'Nome do time',
+          hintText: 'Ex.: União FC',
+        ),
+        validator: _obrigatorio,
+      ),
+      const SizedBox(height: 10),
+      dropdown(
+        'Modalidade',
+        refs.modalidades,
+        modalidade,
+        (v) => modalidade = v,
+      ),
+      const SizedBox(height: 10),
+      dropdown(
+        'Categoria',
+        refs.categoriasEtarias,
+        categoria,
+        (v) => categoria = v,
+      ),
+      const SizedBox(height: 10),
+      dropdown(
+        'Nível do time',
+        refs.niveisTecnicos,
+        nivel,
+        (v) => nivel = v,
+        obrigatorio: false,
+      ),
+      const SizedBox(height: 10),
+      TextFormField(
+        controller: jogadores,
+        keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        decoration: const InputDecoration(
+          labelText: 'Quantidade de jogadores',
+          hintText: 'Quantos jogadores o time tem',
+        ),
+        validator: (v) {
+          final n = int.tryParse(v ?? '');
+          return n == null || n < 1 || n > 60
+              ? 'Informe a quantidade de jogadores'
+              : null;
+        },
+      ),
+      const SizedBox(height: 10),
+      TextFormField(
+        controller: cidade,
+        decoration: const InputDecoration(
+          labelText: 'Cidade',
+          hintText: 'São Paulo',
+        ),
+        validator: _obrigatorio,
+      ),
+      const SizedBox(height: 10),
+      DropdownButtonFormField<String>(
+        initialValue: estado,
+        decoration: const InputDecoration(labelText: 'Estado'),
+        items: refs.estados
+            .map((e) => DropdownMenuItem(value: e.sigla, child: Text(e.sigla)))
+            .toList(),
+        onChanged: (v) => setState(() => estado = v),
+        validator: (v) => v == null ? 'Selecione o estado' : null,
+      ),
+    ];
+  }
+
+  Future<void> _enviar() async {
+    if (!form.currentState!.validate()) return;
+    final app = AppScope.of(context);
+    setState(() => enviando = true);
+    try {
+      switch (widget.page) {
+        case 'forgot':
+          await app.repositorios.auth.solicitarRecuperacaoSenha(
+            email.text.trim(),
+          );
+          widget.onDone(
+            'Se o e-mail estiver cadastrado, você receberá um link de recuperação.',
+          );
+        case 'register':
+          await app.cadastrar(
+            CadastroCapitao(
+              nome: nome.text.trim(),
+              email: email.text.trim().toLowerCase(),
+              senha: senha.text,
+              telefone: telefone.text.trim().isEmpty
+                  ? null
+                  : telefone.text.trim(),
+              nomeTime: nomeTime.text.trim(),
+              idModalidade: modalidade!,
+              idCategoriaEtaria: categoria!,
+              idNivelTecnico: nivel,
+              quantidadeJogadores: int.parse(jogadores.text),
+              cidade: cidade.text.trim(),
+              siglaEstado: estado!,
+            ),
+          );
+          widget.onDone('Bem-vindo ao Joga Contra!');
+        default:
+          await app.entrar(email.text.trim().toLowerCase(), senha.text);
+          widget.onDone('Bem-vindo ao Joga Contra!');
+      }
+    } catch (e) {
+      if (mounted) _avisar(context, '$e');
+    } finally {
+      if (mounted) setState(() => enviando = false);
+    }
   }
 }

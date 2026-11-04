@@ -1,192 +1,258 @@
 import 'package:flutter/material.dart';
-import '../models/game.dart';
+import '../core/formatters.dart';
+import '../models/anuncio_partida.dart';
+import '../models/partida.dart';
+import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/carregador.dart';
 import '../widgets/common.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({
     super.key,
-    required this.games,
-    required this.teamName,
     required this.onNavigate,
-    required this.onSelectGame,
+    required this.onSelectAnuncio,
+    required this.onOpenPartida,
   });
-  final List<Game> games;
-  final String teamName;
   final ValueChanged<String> onNavigate;
-  final ValueChanged<Game> onSelectGame;
+  final ValueChanged<AnuncioPartida> onSelectAnuncio;
+  final ValueChanged<Partida> onOpenPartida;
 
   @override
-  Widget build(BuildContext context) => ListView(
-    padding: const EdgeInsets.fromLTRB(18, 21, 18, 28),
-    children: [
-      const Text(
-        'BOM TE VER, JOÃO',
-        style: TextStyle(
-          fontSize: 9,
-          letterSpacing: 1.4,
-          color: AppColors.muted,
-          fontWeight: FontWeight.w800,
-        ),
+  Widget build(BuildContext context) {
+    final app = AppScope.of(context);
+    final time = app.time!;
+    final repos = app.repositorios;
+    return Carregador<(Partida?, List<AnuncioPartida>)>(
+      carregar: () async => (
+        await repos.partidas.proximaDoMeuTime(),
+        await repos.anuncios.buscar(const FiltroAnuncios()),
       ),
-      const SizedBox(height: 5),
-      const Text(
-        'Seu time entra em campo. ⚽',
-        style: TextStyle(
-          fontSize: 22,
-          fontWeight: FontWeight.w800,
-          color: AppColors.ink,
-        ),
-      ),
-      const SizedBox(height: 4),
-      const Text(
-        'Encontre o próximo adversário para o União FC.',
-        style: TextStyle(color: AppColors.muted, fontSize: 12),
-      ),
-      const SizedBox(height: 20),
-      _Hero(
-        onSearch: () => onNavigate('search'),
-        onCreate: () => onNavigate('create'),
-      ),
-      const SizedBox(height: 16),
-      Row(
-        children: [
-          Expanded(
-            child: _StatCard(
-              icon: Icons.sports_soccer,
-              value: '18',
-              label: 'Jogos realizados',
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: _StatCard(
-              icon: Icons.star_outline,
-              value: '4,9',
-              label: 'Avaliação geral',
-            ),
-          ),
-        ],
-      ),
-      const SizedBox(height: 21),
-      Row(
-        children: [
-          const Expanded(
-            child: Text(
-              'Próxima partida',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-            ),
-          ),
-          TextButton(
-            onPressed: () => onNavigate('games'),
-            child: const Text('Ver jogos'),
-          ),
-        ],
-      ),
-      Panel(
-        child: Column(
+      builder: (context, dados, _) {
+        final (proxima, anuncios) = dados;
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(18, 21, 18, 28),
           children: [
+            Text(
+              'BOM TE VER, ${app.usuario!.primeiroNome.toUpperCase()}',
+              style: const TextStyle(
+                fontSize: 9,
+                letterSpacing: 1.4,
+                color: AppColors.muted,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 5),
+            const Text(
+              'Seu time entra em campo. ⚽',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                color: AppColors.ink,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Encontre o próximo adversário para o ${time.nome}.',
+              style: const TextStyle(color: AppColors.muted, fontSize: 12),
+            ),
+            const SizedBox(height: 20),
+            _Hero(
+              onSearch: () => onNavigate('search'),
+              onCreate: () => onNavigate('create'),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: _StatCard(
+                    icon: Icons.sports_soccer,
+                    value: '${time.totalPartidasRealizadas}',
+                    label: 'Jogos realizados',
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _StatCard(
+                    icon: Icons.star_outline,
+                    value: time.mediaAvaliacao == null
+                        ? '–'
+                        : Formatos.decimal(time.mediaAvaliacao!),
+                    label: 'Avaliação geral',
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 21),
             Row(
               children: [
                 const Expanded(
                   child: Text(
-                    'Confirmada',
-                    style: TextStyle(
-                      color: AppColors.green,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 11,
-                    ),
+                    'Próxima partida',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
                   ),
                 ),
-                Text(
-                  'Sábado, 18 de julho',
-                  style: const TextStyle(color: AppColors.muted, fontSize: 10),
+                TextButton(
+                  onPressed: () => onNavigate('games'),
+                  child: const Text('Ver jogos'),
                 ),
               ],
             ),
-            const SizedBox(height: 13),
+            if (proxima == null)
+              EmptyState(
+                title: 'Nenhuma partida marcada.',
+                message: 'Encontre um adversário ou publique um anúncio.',
+                action: TextButton(
+                  onPressed: () => onNavigate('search'),
+                  child: const Text('Buscar adversário'),
+                ),
+              )
+            else
+              _ProximaPartida(
+                partida: proxima,
+                idMeuTime: time.id,
+                siglaMeuTime: time.siglaExibicao,
+                nomeMeuTime: time.nome,
+                onOpen: () => onOpenPartida(proxima),
+              ),
+            const SizedBox(height: 20),
             Row(
               children: [
-                const Crest(),
-                Expanded(
+                const Expanded(
                   child: Text(
-                    teamName,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
-                    ),
+                    'Jogos perto de você',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
                   ),
                 ),
-                const Text(
-                  'VS',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: AppColors.muted,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    'Real Amigos',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-                const Crest(label: 'RA'),
-              ],
-            ),
-            const SizedBox(height: 10),
-            const Row(
-              children: [
-                Icon(Icons.place_outlined, size: 15, color: AppColors.green),
-                SizedBox(width: 5),
-                Expanded(
-                  child: Text(
-                    'Campo do Ibirapuera · 16:00',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 11, color: AppColors.muted),
-                  ),
+                TextButton(
+                  onPressed: () => onNavigate('search'),
+                  child: const Text('Ver todos'),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            ActionButton(
-              'Ver partida',
-              expand: true,
-              outline: true,
-              icon: Icons.arrow_forward,
-              onPressed: () => onNavigate('confirmed'),
-            ),
+            if (anuncios.isEmpty)
+              const EmptyState(
+                title: 'Nenhum rival por aqui. Ainda.',
+                message:
+                    'Assim que novos jogos forem anunciados, eles aparecem aqui.',
+              ),
+            for (final anuncio in anuncios.take(2))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 11),
+                child: AnuncioCard(
+                  anuncio: anuncio,
+                  onTap: () => onSelectAnuncio(anuncio),
+                ),
+              ),
           ],
-        ),
-      ),
-      const SizedBox(height: 20),
-      Row(
+        );
+      },
+    );
+  }
+}
+
+class _ProximaPartida extends StatelessWidget {
+  const _ProximaPartida({
+    required this.partida,
+    required this.idMeuTime,
+    required this.siglaMeuTime,
+    required this.nomeMeuTime,
+    required this.onOpen,
+  });
+  final Partida partida;
+  final String idMeuTime, siglaMeuTime, nomeMeuTime;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final adversario = partida.adversarioDe(idMeuTime);
+    return Panel(
+      child: Column(
         children: [
-          const Expanded(
-            child: Text(
-              'Jogos perto de você',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-            ),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Confirmada',
+                  style: TextStyle(
+                    color: AppColors.green,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              Text(
+                Formatos.dataLonga(partida.dataHoraInicio),
+                style: const TextStyle(color: AppColors.muted, fontSize: 10),
+              ),
+            ],
           ),
-          TextButton(
-            onPressed: () => onNavigate('search'),
-            child: const Text('Ver todos'),
+          const SizedBox(height: 13),
+          Row(
+            children: [
+              Crest(label: siglaMeuTime),
+              Expanded(
+                child: Text(
+                  nomeMeuTime,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              const Text(
+                'VS',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: AppColors.muted,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  adversario.nome,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              Crest(label: adversario.siglaExibicao),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Icon(
+                Icons.place_outlined,
+                size: 15,
+                color: AppColors.green,
+              ),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  '${partida.nomeLocal} · ${Formatos.hora(partida.dataHoraInicio)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11, color: AppColors.muted),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ActionButton(
+            'Ver partida',
+            expand: true,
+            outline: true,
+            icon: Icons.arrow_forward,
+            onPressed: onOpen,
           ),
         ],
       ),
-      for (final game in games.take(2))
-        Padding(
-          padding: const EdgeInsets.only(bottom: 11),
-          child: GameCard(game: game, onTap: () => onSelectGame(game)),
-        ),
-    ],
-  );
+    );
+  }
 }
 
 class _Hero extends StatelessWidget {

@@ -1,12 +1,18 @@
 import 'package:flutter/material.dart';
-import 'models/game.dart';
-import 'repositories/mock_repository.dart';
+import 'core/formatters.dart';
+import 'models/anuncio_partida.dart';
+import 'models/notificacao.dart';
+import 'models/partida.dart';
+import 'models/solicitacao_confronto.dart';
+import 'models/time.dart';
 import 'screens/account_screens.dart';
 import 'screens/activity_screens.dart';
 import 'screens/discover_screen.dart';
 import 'screens/game_detail_screen.dart';
 import 'screens/home_screen.dart';
+import 'state/app_state.dart';
 import 'theme/app_theme.dart';
+import 'widgets/carregador.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
@@ -15,12 +21,16 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
-  String page = 'home', query = '', sport = 'Todos', gameTab = 'Todos';
-  String teamName = 'União FC';
-  Game selected = MockRepository.games.first;
-  bool confirmed = false;
-  int? editingAd;
-  final ads = <String>['União FC procura adversário|Ativo'];
+  static const _paginasAuth = {'login', 'register', 'forgot'};
+
+  String page = 'home', gameTab = 'Todos';
+  FiltrosBusca filtrosBusca = const FiltrosBusca();
+  AnuncioPartida? anuncioSelecionado, anuncioEditando;
+  String? idSolicitacao, idPartida;
+  Partida? partidaAvaliada;
+
+  /// Incrementado após alterações para recarregar a tela atual.
+  int versao = 0;
 
   static const titles = <String, String>{
     'home': 'Início',
@@ -41,11 +51,30 @@ class _AppShellState extends State<AppShell> {
     'forgot': 'Recuperar acesso',
   };
 
-  void go(String next) => setState(() => page = next);
-  void openGame(Game game) => setState(() {
-    selected = game;
+  AppState get app => AppScope.of(context);
+
+  void go(String next) => setState(() {
+    if (next == 'create') anuncioEditando = null;
+    page = next;
+  });
+
+  void _recarregar() => setState(() => versao++);
+
+  void openAnuncio(AnuncioPartida anuncio) => setState(() {
+    anuncioSelecionado = anuncio;
     page = 'details';
   });
+
+  void openChat(String id) => setState(() {
+    idSolicitacao = id;
+    page = 'chat';
+  });
+
+  void openPartida(String id) => setState(() {
+    idPartida = id;
+    page = 'confirmed';
+  });
+
   void notify(String message) => ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
       content: Text(message),
@@ -56,27 +85,52 @@ class _AppShellState extends State<AppShell> {
 
   @override
   Widget build(BuildContext context) {
+    final app = AppScope.of(context);
+    if (app.inicializando) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator(color: AppColors.green)),
+      );
+    }
+    if (app.erroInicial != null) {
+      return Scaffold(
+        body: SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.all(22),
+            children: [
+              const SizedBox(height: 60),
+              ErroCarregamento(
+                mensagem: app.erroInicial!,
+                onTentar: app.inicializar,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    // Sem sessão, somente as telas de autenticação ficam acessíveis.
+    final atual = app.autenticado || _paginasAuth.contains(page)
+        ? page
+        : 'login';
     final tabs = const ['home', 'search', 'create', 'conversations', 'profile'];
-    final tabIndex = tabs.indexOf(page);
-    final showNavigation = !['login', 'register', 'forgot'].contains(page);
+    final tabIndex = tabs.indexOf(atual);
+    final telaAuth = _paginasAuth.contains(atual);
     return PopScope(
-      canPop: page == 'home',
+      canPop: atual == 'home' || atual == 'login',
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) go('home');
+        if (!didPop) go(telaAuth ? 'login' : _backFor(atual));
       },
       child: Scaffold(
-        appBar:
-            page.startsWith('login') || page == 'register' || page == 'forgot'
+        appBar: telaAuth
             ? null
             : AppBar(
-                leading: page == 'home'
+                leading: atual == 'home'
                     ? null
                     : IconButton(
-                        onPressed: () => go(_backFor(page)),
+                        onPressed: () => go(_backFor(atual)),
                         icon: const Icon(Icons.arrow_back),
                       ),
                 title: Text(
-                  titles[page] ?? 'Joga Contra',
+                  titles[atual] ?? 'Joga Contra',
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w800,
@@ -91,12 +145,12 @@ class _AppShellState extends State<AppShell> {
                   IconButton(
                     tooltip: 'Perfil',
                     onPressed: () => go('profile'),
-                    icon: const CircleAvatar(
+                    icon: CircleAvatar(
                       radius: 14,
-                      backgroundColor: Color(0xFFEAF2E8),
+                      backgroundColor: const Color(0xFFEAF2E8),
                       child: Text(
-                        'J',
-                        style: TextStyle(
+                        app.usuario?.inicial ?? '',
+                        style: const TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w800,
                           color: AppColors.forest,
@@ -110,9 +164,16 @@ class _AppShellState extends State<AppShell> {
                   child: Container(height: 1, color: AppColors.border),
                 ),
               ),
-        body: SafeArea(top: false, child: _screen()),
-        bottomNavigationBar: showNavigation
-            ? NavigationBar(
+        body: SafeArea(
+          top: false,
+          child: KeyedSubtree(
+            key: ValueKey('$atual#$versao'),
+            child: _screen(atual),
+          ),
+        ),
+        bottomNavigationBar: telaAuth
+            ? null
+            : NavigationBar(
                 selectedIndex: tabIndex < 0 ? 0 : tabIndex,
                 onDestinationSelected: (i) => go(tabs[i]),
                 destinations: const [
@@ -141,8 +202,7 @@ class _AppShellState extends State<AppShell> {
                     label: 'Perfil',
                   ),
                 ],
-              )
-            : null,
+              ),
       ),
     );
   }
@@ -154,220 +214,192 @@ class _AppShellState extends State<AppShell> {
     'review' => 'games',
     'notifications' => 'home',
     'map' => 'search',
-    'login' || 'register' || 'forgot' => 'home',
     _ => 'home',
   };
 
-  Widget _screen() => switch (page) {
-    'home' => HomeScreen(
-      games: MockRepository.games,
-      teamName: teamName,
-      onNavigate: go,
-      onSelectGame: openGame,
-    ),
+  Widget _home() => HomeScreen(
+    onNavigate: go,
+    onSelectAnuncio: openAnuncio,
+    onOpenPartida: (p) => openPartida(p.id),
+  );
+
+  Widget _screen(String atual) => switch (atual) {
+    'home' => _home(),
     'search' => DiscoverScreen(
-      games: MockRepository.games,
-      query: query,
-      sport: sport,
-      onQuery: (v) => setState(() => query = v),
-      onSport: (v) => setState(() => sport = v),
-      onSelectGame: openGame,
+      filtros: filtrosBusca,
+      onFiltros: (f) => filtrosBusca = f,
+      onSelectAnuncio: openAnuncio,
       onMap: () => go('map'),
     ),
-    'details' => GameDetailScreen(
-      game: selected,
-      onInterest: () => _confirm('interest'),
+    'details' when anuncioSelecionado != null => GameDetailScreen(
+      anuncio: anuncioSelecionado!,
+      onInterest: () => _demonstrarInteresse(anuncioSelecionado!),
     ),
     'create' => CreateGameScreen(
-      editing: editingAd != null,
-      onPublish: (title) {
-        setState(() {
-          if (editingAd case final index?) {
-            ads[index] = '$teamName · $title|Ativo';
-          } else {
-            ads.add('$teamName · $title|Ativo');
-          }
-          editingAd = null;
-          page = 'ads';
-        });
-        notify('Anúncio salvo! Os times da sua região já podem encontrá-lo.');
-      },
+      editando: anuncioEditando,
+      onSalvar: _salvarAnuncio,
     ),
-    'conversations' => ConversationsScreen(
-      onOpen: (g) => setState(() {
-        selected = g;
-        page = 'chat';
-      }),
+    'conversations' => ConversationsScreen(onOpen: (s) => openChat(s.id)),
+    'chat' when idSolicitacao != null => ChatScreen(
+      idSolicitacao: idSolicitacao!,
+      onConfirmar: _confirmarPartida,
+      onVerPartida: openPartida,
     ),
-    'chat' => ChatScreen(
-      game: selected,
-      teamName: teamName,
-      confirmed: confirmed,
-      onConfirm: () => confirmed ? go('confirmed') : _confirm('confirm'),
-    ),
-    'confirmed' => ConfirmationScreen(
-      game: selected,
-      teamName: teamName,
-      onChat: () => go('chat'),
-      onCancel: () => _confirm('cancel'),
+    'confirmed' when idPartida != null => ConfirmationScreen(
+      idPartida: idPartida!,
+      onChat: openChat,
+      onCancel: _cancelarPartida,
     ),
     'games' => GamesScreen(
       tab: gameTab,
       onTab: (v) => setState(() => gameTab = v),
-      teamName: teamName,
-      onOpen: _openGameStatus,
+      onAnuncios: () => go('ads'),
+      onChat: (s) => openChat(s.id),
+      onPartida: (p) => openPartida(p.id),
+      onAvaliar: (p) => setState(() {
+        partidaAvaliada = p;
+        page = 'review';
+      }),
     ),
     'ads' => AdsScreen(
-      ads: ads,
-      onCreate: () => setState(() {
-        editingAd = null;
+      onCreate: () => go('create'),
+      onEdit: (ad) => setState(() {
+        anuncioEditando = ad;
         page = 'create';
       }),
-      onEdit: (i) => setState(() {
-        editingAd = i;
-        page = 'create';
-      }),
-      onToggle: (i) => setState(() {
-        ads[i] = ads[i].contains('|Pausado')
-            ? ads[i].replaceAll('|Pausado', '|Ativo')
-            : ads[i].replaceAll('|Ativo', '|Pausado');
-      }),
-      onDelete: (i) => _deleteAd(i),
       onConversations: () => go('conversations'),
     ),
     'profile' => ProfileScreen(
-      teamName: teamName,
       onEdit: _editProfile,
       onGames: () => go('games'),
-      onLogout: () => go('login'),
+      onLogout: _sair,
     ),
-    'notifications' => NotificationsScreen(onOpen: go),
-    'map' => MapScreen(games: MockRepository.games, onSelect: openGame),
-    'review' => ReviewScreen(
-      game: selected,
-      onSubmit: () {
-        _success('reviewed');
-      },
+    'notifications' => NotificationsScreen(onOpen: _abrirNotificacao),
+    'map' => MapScreen(onSelect: openAnuncio),
+    'review' when partidaAvaliada != null => ReviewScreen(
+      partida: partidaAvaliada!,
+      onSubmit: _avaliar,
     ),
     'login' || 'register' || 'forgot' => AuthScreen(
-      page: page,
+      page: atual,
       onPage: go,
-      onDone: () {
-        if (page == 'forgot') {
-          notify(
-            'Link de recuperação solicitado. Este é um protótipo demonstrativo.',
-          );
-          go('login');
-        } else {
-          go('home');
-          notify('Bem-vindo ao Joga Contra!');
-        }
+      onDone: (mensagem) {
+        notify(mensagem);
+        go(atual == 'forgot' ? 'login' : 'home');
       },
     ),
-    _ => HomeScreen(
-      games: MockRepository.games,
-      teamName: teamName,
-      onNavigate: go,
-      onSelectGame: openGame,
-    ),
+    _ => _home(),
   };
 
-  void _openGameStatus(String status) {
-    final index = switch (status) {
-      'Aguardando' => 3,
-      'Negociando' => 1,
-      'Confirmado' => 0,
-      _ => 0,
-    };
-    selected = MockRepository.games[index];
-    setState(
-      () => page = switch (status) {
-        'Aguardando' => 'ads',
-        'Negociando' => 'chat',
-        'Confirmado' => 'confirmed',
-        _ => 'review',
-      },
-    );
-  }
+  Future<bool> _perguntar(String title, String body, String positive) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(title),
+          content: Text(body),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Agora não'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(positive),
+            ),
+          ],
+        ),
+      ) ==
+      true;
 
-  Future<void> _confirm(String kind) async {
-    final (title, body, positive) = switch (kind) {
-      'interest' => (
-        'Bora marcar esse jogo?',
-        'Você quer demonstrar interesse neste jogo? Vamos abrir uma conversa com o responsável pelo time.',
-        'Sim, tenho interesse',
-      ),
-      'confirm' => (
-        'Tudo combinado?',
-        'Confirme a partida de $teamName contra ${selected.name}, ${selected.date} às ${selected.time}.',
-        'Confirmar partida',
-      ),
-      'cancel' => (
-        'Cancelar a partida?',
-        'O outro time será avisado. Tenha certeza antes de cancelar.',
-        'Cancelar partida',
-      ),
-      _ => (
-        'Excluir este anúncio?',
-        'Esta ação não pode ser desfeita. Os interessados não poderão mais encontrar este jogo.',
-        'Sim, excluir',
-      ),
-    };
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Text(body),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Agora não'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(positive),
-          ),
-        ],
-      ),
-    );
-    if (ok != true || !mounted) return;
-    switch (kind) {
-      case 'interest':
-        go('chat');
-        notify('Interesse enviado! Combine os detalhes na conversa.');
-      case 'confirm':
-        setState(() {
-          confirmed = true;
-          page = 'confirmed';
-        });
-      case 'cancel':
-        setState(() {
-          confirmed = false;
-          page = 'games';
-        });
-        notify(
-          'Partida cancelada. O time adversário será informado na versão conectada.',
-        );
+  /// Executa uma ação de dados mostrando o erro da API, se houver.
+  Future<T?> _executar<T>(Future<T> Function() acao) async {
+    try {
+      return await acao();
+    } catch (e) {
+      if (mounted) notify('$e');
+      return null;
     }
   }
 
-  Future<void> _success(String type) async {
-    final (title, body, next) = type == 'reviewed'
-        ? (
-            'Valeu pelo feedback!',
-            'Sua avaliação ajuda todo mundo a encontrar bons adversários.',
-            'games',
-          )
-        : (
-            'Seu anúncio está no jogo!',
-            'Agora os times da sua região podem encontrar seu anúncio e demonstrar interesse.',
-            'ads',
-          );
+  Future<void> _demonstrarInteresse(AnuncioPartida anuncio) async {
+    final ok = await _perguntar(
+      'Bora marcar esse jogo?',
+      'Você quer demonstrar interesse neste jogo? Vamos abrir uma conversa com o responsável pelo time.',
+      'Sim, tenho interesse',
+    );
+    if (!ok || !mounted) return;
+    final s = await _executar(
+      () => app.repositorios.solicitacoes.solicitar(anuncio.id),
+    );
+    if (s == null || !mounted) return;
+    openChat(s.id);
+    notify('Interesse enviado! Combine os detalhes na conversa.');
+  }
+
+  Future<void> _confirmarPartida(SolicitacaoConfronto s) async {
+    final meuTime = app.time!;
+    final adversario = s.adversario(meuTime.id);
+    final ok = await _perguntar(
+      'Tudo combinado?',
+      'Confirme a partida de ${meuTime.nome} contra ${adversario.nome}, ${Formatos.dataCurta(s.anuncio.dataHoraInicio)} às ${Formatos.hora(s.anuncio.dataHoraInicio)}.',
+      'Confirmar partida',
+    );
+    if (!ok || !mounted) return;
+    final atualizada = await _executar(
+      () => app.repositorios.solicitacoes.confirmar(s.id),
+    );
+    if (atualizada == null || !mounted) return;
+    if (atualizada.idPartida != null) {
+      openPartida(atualizada.idPartida!);
+    } else {
+      notify('Confirmação registrada. Aguardando o outro time confirmar.');
+      _recarregar();
+    }
+  }
+
+  Future<void> _cancelarPartida(Partida p) async {
+    final ok = await _perguntar(
+      'Cancelar a partida?',
+      'O outro time será avisado. Tenha certeza antes de cancelar.',
+      'Cancelar partida',
+    );
+    if (!ok || !mounted) return;
+    final cancelada = await _executar(
+      () => app.repositorios.partidas.cancelar(p.id),
+    );
+    if (cancelada == null || !mounted) return;
+    go('games');
+    notify('Partida cancelada. O time adversário será avisado.');
+  }
+
+  Future<void> _salvarAnuncio(RascunhoAnuncio dados) async {
+    final editando = anuncioEditando;
+    final salvo = await _executar(
+      () => editando == null
+          ? app.repositorios.anuncios.criar(dados)
+          : app.repositorios.anuncios.atualizar(editando.id, dados),
+    );
+    if (salvo == null || !mounted) return;
+    setState(() {
+      anuncioEditando = null;
+      page = 'ads';
+    });
+    notify('Anúncio salvo! Os times da sua região já podem encontrá-lo.');
+  }
+
+  Future<void> _avaliar(NovaAvaliacao avaliacao) async {
+    final ok = await _executar(() async {
+      await app.repositorios.partidas.avaliar(avaliacao);
+      return true;
+    });
+    if (ok != true || !mounted) return;
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Text(body),
+        title: const Text('Valeu pelo feedback!'),
+        content: const Text(
+          'Sua avaliação ajuda todo mundo a encontrar bons adversários.',
+        ),
         actions: [
           FilledButton(
             onPressed: () => Navigator.pop(ctx),
@@ -376,11 +408,24 @@ class _AppShellState extends State<AppShell> {
         ],
       ),
     );
-    if (mounted) go(next);
+    if (mounted) go('games');
   }
 
+  void _abrirNotificacao(Notificacao n) => switch (n.tipo) {
+    TipoNotificacao.solicitacaoRecebida || TipoNotificacao.mensagemRecebida
+        when n.idSolicitacao != null =>
+      openChat(n.idSolicitacao!),
+    TipoNotificacao.partidaConfirmada || TipoNotificacao.partidaCancelada
+        when n.idPartida != null =>
+      openPartida(n.idPartida!),
+    TipoNotificacao.anuncioExpirando => go('ads'),
+    TipoNotificacao.solicitacaoRecebida ||
+    TipoNotificacao.mensagemRecebida => go('conversations'),
+    _ => go('games'),
+  };
+
   Future<void> _editProfile() async {
-    final controller = TextEditingController(text: teamName);
+    final controller = TextEditingController(text: app.time!.nome);
     final value = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -401,33 +446,17 @@ class _AppShellState extends State<AppShell> {
         ],
       ),
     );
-    if (value != null && value.trim().isNotEmpty) {
-      setState(() => teamName = value.trim());
-      notify('Perfil atualizado com sucesso!');
-    }
+    controller.dispose();
+    if (value == null || value.trim().isEmpty || !mounted) return;
+    final ok = await _executar(() async {
+      await app.atualizarTime(AtualizacaoTime(nome: value.trim()));
+      return true;
+    });
+    if (ok == true && mounted) notify('Perfil atualizado com sucesso!');
   }
 
-  Future<void> _deleteAd(int index) async {
-    final yes = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Excluir este anúncio?'),
-        content: const Text('Esta ação não pode ser desfeita.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Agora não'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Sim, excluir'),
-          ),
-        ],
-      ),
-    );
-    if (yes == true) {
-      setState(() => ads.removeAt(index));
-      notify('Anúncio excluído.');
-    }
+  Future<void> _sair() async {
+    await _executar(app.sair);
+    if (mounted) go('login');
   }
 }
