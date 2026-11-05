@@ -1,5 +1,3 @@
-import 'package:flutter/foundation.dart';
-
 /// Configurações técnicas do app. Nada aqui é dado de negócio e nenhum
 /// segredo pode ser colocado neste arquivo (o app é distribuído ao usuário).
 class ApiConfig {
@@ -13,14 +11,9 @@ class ApiConfig {
     defaultValue: 'http://10.0.2.2:3000/api',
   );
 
-  /// Usa repositórios em memória com dados fictícios de demonstração.
-  /// Padrão: ligado em debug/teste, desligado em release. Builds de produção
-  /// nunca carregam dados fictícios, a menos que alguém force
-  /// `--dart-define=USE_DEMO_DATA=true`.
-  static const useDemoData = bool.fromEnvironment(
-    'USE_DEMO_DATA',
-    defaultValue: !kReleaseMode,
-  );
+  /// O app sempre usa a API. Os dados fictícios em memória só entram quando
+  /// pedidos de forma explícita: `--dart-define=USE_DEMO_DATA=true`.
+  static const useDemoData = bool.fromEnvironment('USE_DEMO_DATA');
 
   static const requestTimeout = Duration(seconds: 15);
 }

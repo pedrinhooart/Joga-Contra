@@ -25,7 +25,10 @@ class HomeScreen extends StatelessWidget {
     final repos = app.repositorios;
     return Carregador<(Partida?, List<AnuncioPartida>)>(
       carregar: () async => (
-        await repos.partidas.proximaDoMeuTime(),
+        // Estatísticas do time mudam com partidas e avaliações.
+        await app.recarregarTime().then(
+          (_) => repos.partidas.proximaDoMeuTime(),
+        ),
         await repos.anuncios.buscar(const FiltroAnuncios()),
       ),
       builder: (context, dados, _) {

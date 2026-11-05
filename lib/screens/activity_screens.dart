@@ -151,8 +151,8 @@ class _CreateGameScreenState extends State<CreateGameScreen> {
             ),
             validator: (v) {
               final n = int.tryParse(v ?? '');
-              return n == null || n < 2 || n > 30
-                  ? 'Informe de 2 a 30 jogadores por equipe'
+              return n == null || n < 5 || n > 30
+                  ? 'Informe de 5 a 30 jogadores por equipe'
                   : null;
             },
           ),
@@ -296,7 +296,7 @@ class _CreateGameScreenState extends State<CreateGameScreen> {
         RascunhoAnuncio(
           idModalidade: modalidade!,
           idCategoriaEtaria: categoria!,
-          idNivelTecnico: nivel,
+          idNivelTecnico: nivel!,
           idMandoCampo: mando,
           quantidadeJogadores: int.parse(jogadores.text),
           dataHoraInicio: Formatos.lerDataHora(data.text, hora.text)!,

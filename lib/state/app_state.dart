@@ -88,6 +88,7 @@ class AppState extends ChangeNotifier {
   void _sessaoExpirada() {
     if (_sessao == null) return;
     _sessao = null;
+    repositorios.auth.sair();
     notifyListeners();
   }
 }

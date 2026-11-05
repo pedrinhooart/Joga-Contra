@@ -21,13 +21,20 @@ O arquivo gerado fica em `build/app/outputs/flutter-apk/app-debug.apk`.
 
 | Modo | Como ativar | Uso |
 |---|---|---|
-| Demonstração (dados fictícios em memória) | padrão em debug e nos testes; `--dart-define=USE_DEMO_DATA=true` | Desenvolvimento de telas sem API |
-| API REST | padrão em release; `--dart-define=USE_DEMO_DATA=false` | Dados reais |
+| API REST | **padrão** | Dados reais do banco `joga_contra_v2` |
+| Demonstração (dados fictícios em memória) | somente com `--dart-define=USE_DEMO_DATA=true` | Ver telas sem API |
 
-URL da API: `--dart-define=API_BASE_URL=http://192.168.0.10:3000/api` (padrão `http://10.0.2.2:3000/api`, emulador Android).
+A URL da API fica em `config/emulador.json` e `config/celular.json` (se o IP do computador mudar, edite só esse arquivo). A API precisa estar rodando: veja [backend/README.md](backend/README.md). Passo a passo em [docs/HOMOLOGACAO_JOGA_CONTRA.md](docs/HOMOLOGACAO_JOGA_CONTRA.md).
 
 ```powershell
-flutter run --dart-define=USE_DEMO_DATA=false --dart-define=API_BASE_URL=http://localhost:3000/api
+flutter run --dart-define-from-file=config/emulador.json
+flutter run -d ID_DO_CELULAR --dart-define-from-file=config/celular.json
+```
+
+Testes contra uma API rodando (gravam dados fictícios):
+
+```powershell
+flutter test test/integracao_api_test.dart test/integracao_telas_test.dart --dart-define=API_TESTE_URL=http://127.0.0.1:3000/api
 ```
 
 ## Estrutura
@@ -37,14 +44,15 @@ flutter run --dart-define=USE_DEMO_DATA=false --dart-define=API_BASE_URL=http://
 - `lib/models/`: modelos de domínio e conversão JSON (usuário, time, anúncio, solicitação, partida, notificação, referências).
 - `lib/repositories/contratos.dart`: interfaces de acesso a dados usadas pelas telas.
 - `lib/repositories/api/`: implementação via API REST.
-- `lib/repositories/demo/`: implementação de demonstração (dados fictícios, nunca usada em release por padrão).
+- `lib/repositories/demo/`: implementação de demonstração (dados fictícios, só com `USE_DEMO_DATA=true`).
 - `lib/services/api_client.dart`: cliente HTTP único.
+- `lib/services/armazenamento_sessao.dart`: guarda o token no armazenamento seguro do sistema.
 - `lib/state/app_state.dart`: sessão (capitão + time) e cadastros de referência.
 - `lib/core/formatters.dart`: formatação pt-BR.
 - `lib/theme/`: paleta e tema visual.
 
-A auditoria de dados variáveis, o inventário de entidades e o contrato da API estão em [docs/AUDITORIA_DADOS_DINAMICOS.md](docs/AUDITORIA_DADOS_DINAMICOS.md). A API Express ainda usa o banco antigo; os repositórios de API seguem o contrato planejado para o novo banco. Mensagens em tempo real, mapas, upload de imagens e notificações push dependem de integrações futuras.
+A integração entre app, API e banco está em [docs/INTEGRACAO_JOGA_CONTRA_V2.md](docs/INTEGRACAO_JOGA_CONTRA_V2.md). Mensagens em tempo real, mapas, upload de imagens e notificações push dependem de integrações futuras.
 
 ## Banco de dados
 
-O modelo MySQL para um backend/API compartilhado com Android e iOS está documentado em [database/DATABASE_DESIGN.md](database/DATABASE_DESIGN.md). O schema, catálogos iniciais e consultas de referência ficam em `database/`.
+O banco oficial é `joga_contra_v2`, documentado em [database_v2/README.md](database_v2/README.md). A pasta `database/` guarda o projeto antigo, sem uso pela API.

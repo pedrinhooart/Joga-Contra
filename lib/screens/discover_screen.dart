@@ -18,8 +18,10 @@ class FiltrosBusca {
     this.idNivelTecnico,
     this.raioKm = 25,
     this.data,
+    this.cidade = '',
+    this.horario = '',
   });
-  final String texto;
+  final String texto, cidade, horario;
   final int? idModalidade, idCategoriaEtaria, idNivelTecnico;
   final int raioKm;
   final DateTime? data;
@@ -31,6 +33,8 @@ class FiltrosBusca {
     idNivelTecnico: idNivelTecnico,
     raioKm: raioKm,
     data: data,
+    cidade: cidade.isEmpty ? null : cidade,
+    horario: horario.isEmpty ? null : horario,
   );
 }
 
@@ -55,6 +59,10 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   static const _raios = [5, 10, 25, 50, 100];
   late FiltrosBusca f = widget.filtros;
   late final texto = TextEditingController(text: f.texto);
+  // Vivem com a tela: a folha de filtros ainda os usa durante a animação de fechar.
+  final dataController = TextEditingController();
+  final cidadeController = TextEditingController();
+  final horarioController = TextEditingController();
   Future<List<AnuncioPartida>>? _resultados;
   Timer? _debounce;
 
@@ -68,22 +76,31 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   void dispose() {
     _debounce?.cancel();
     texto.dispose();
+    dataController.dispose();
+    cidadeController.dispose();
+    horarioController.dispose();
     super.dispose();
   }
 
   Future<List<AnuncioPartida>> _buscar() =>
       AppScope.repos(context).anuncios.buscar(f.consulta);
 
+  void _rebuscar() {
+    setState(() {
+      _resultados = _buscar();
+    });
+  }
+
   void _aplicar(FiltrosBusca novo, {bool imediato = true}) {
     setState(() => f = novo);
     widget.onFiltros(novo);
     _debounce?.cancel();
     if (imediato) {
-      setState(() => _resultados = _buscar());
+      _rebuscar();
     } else {
       _debounce = Timer(
         const Duration(milliseconds: 400),
-        () => mounted ? setState(() => _resultados = _buscar()) : null,
+        () => mounted ? _rebuscar() : null,
       );
     }
   }
@@ -95,7 +112,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     int? Function()? nivel,
     int? raio,
     DateTime? Function()? data,
+    String? cidade,
+    String? horario,
   }) => FiltrosBusca(
+    cidade: cidade ?? f.cidade,
+    horario: horario ?? f.horario,
     texto: texto ?? f.texto,
     idModalidade: modalidade != null ? modalidade() : f.idModalidade,
     idCategoriaEtaria: categoria != null ? categoria() : f.idCategoriaEtaria,
@@ -195,6 +216,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
               _nome(refs.niveisTecnicos, f.idNivelTecnico, 'Todos os níveis'),
             ),
             if (dataTexto != null) TagPill(dataTexto),
+            if (f.cidade.isNotEmpty) TagPill(f.cidade),
+            if (f.horario.isNotEmpty) TagPill('A partir de ${f.horario}'),
           ],
         ),
         const SizedBox(height: 13),
@@ -212,7 +235,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
             if (snap.hasError) {
               return ErroCarregamento(
                 mensagem: '${snap.error}',
-                onTentar: () => setState(() => _resultados = _buscar()),
+                onTentar: () => _rebuscar(),
               );
             }
             final results = snap.data!;
@@ -249,13 +272,13 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     );
   }
 
-  Future<void> _showFilters(Referencias refs) async {
+  void _showFilters(Referencias refs) {
     int? draftCategoria = f.idCategoriaEtaria, draftNivel = f.idNivelTecnico;
     var draftRaio = f.raioKm;
-    final dataController = TextEditingController(
-      text: f.data == null ? '' : Formatos.dataNumerica(f.data!),
-    );
-    await showModalBottomSheet<void>(
+    dataController.text = f.data == null ? '' : Formatos.dataNumerica(f.data!);
+    cidadeController.text = f.cidade;
+    horarioController.text = f.horario;
+    showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
@@ -283,6 +306,23 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                 ),
                 keyboardType: TextInputType.datetime,
                 controller: dataController,
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                decoration: const InputDecoration(
+                  labelText: 'Horário a partir de',
+                  hintText: 'Ex.: 16:00',
+                ),
+                keyboardType: TextInputType.datetime,
+                controller: horarioController,
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                decoration: const InputDecoration(
+                  labelText: 'Cidade',
+                  hintText: 'Ex.: São Paulo',
+                ),
+                controller: cidadeController,
               ),
               const SizedBox(height: 10),
               DropdownButtonFormField<int>(
@@ -331,6 +371,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                           nivel: () => null,
                           raio: 25,
                           data: () => null,
+                          cidade: '',
+                          horario: '',
                         ),
                       );
                     },
@@ -343,6 +385,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                         dataController.text,
                         '00:00',
                       );
+                      final horario = horarioController.text.trim();
+                      // Horário inválido é ignorado, como a data.
+                      final horarioValido =
+                          Formatos.lerDataHora('01/01/2000', horario) != null;
+                      final cidade = cidadeController.text.trim();
                       Navigator.pop(context);
                       _aplicar(
                         _com(
@@ -350,6 +397,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                           nivel: () => draftNivel,
                           raio: draftRaio,
                           data: () => data,
+                          cidade: cidade,
+                          horario: horarioValido ? horario.padLeft(5, '0') : '',
                         ),
                       );
                     },
@@ -362,7 +411,6 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         ),
       ),
     );
-    dataController.dispose();
   }
 
   void _clear() {

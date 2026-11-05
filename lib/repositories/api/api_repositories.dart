@@ -6,20 +6,21 @@ import '../../models/solicitacao_confronto.dart';
 import '../../models/time.dart';
 import '../../models/usuario.dart';
 import '../../services/api_client.dart';
+import '../../services/armazenamento_sessao.dart';
 import '../contratos.dart';
 
-/// Implementações que consomem a API REST. Os caminhos abaixo são o contrato
-/// planejado para a etapa do novo banco (ver docs/AUDITORIA_DADOS_DINAMICOS.md,
-/// seção "Contrato da API"). A API Express atual ainda usa caminhos em inglês e
-/// o schema antigo, então estes repositórios só funcionarão após essa etapa.
+/// Implementações que consomem a API REST (ver backend/README.md).
 
 typedef _Json = Map<String, dynamic>;
 
 List<T> _lista<T>(Object? data, T Function(_Json) parse) =>
     ((data as List?) ?? const []).map((e) => parse(e as _Json)).toList();
 
-Repositorios criarRepositoriosApi(ApiClient api) => Repositorios(
-  auth: ApiAuthRepository(api),
+Repositorios criarRepositoriosApi(
+  ApiClient api, {
+  ArmazenamentoSessao armazenamento = const ArmazenamentoSeguro(),
+}) => Repositorios(
+  auth: ApiAuthRepository(api, armazenamento),
   referencias: ApiReferenciaRepository(api),
   times: ApiTimeRepository(api),
   anuncios: ApiAnuncioRepository(api),
@@ -29,13 +30,17 @@ Repositorios criarRepositoriosApi(ApiClient api) => Repositorios(
 );
 
 class ApiAuthRepository implements AuthRepository {
-  ApiAuthRepository(this._api);
+  ApiAuthRepository(this._api, this._armazenamento);
   final ApiClient _api;
+  final ArmazenamentoSessao _armazenamento;
 
-  Sessao _sessao(Object? data) {
+  Future<Sessao> _sessao(Object? data) async {
     final json = data as _Json;
     final token = json['token'] as String?;
-    if (token != null) _api.setToken(token);
+    if (token != null) {
+      _api.setToken(token);
+      await _armazenamento.salvarToken(token);
+    }
     return Sessao(
       usuario: Usuario.fromJson(json['usuario'] as _Json),
       time: Time.fromJson(json['time'] as _Json),
@@ -45,14 +50,15 @@ class ApiAuthRepository implements AuthRepository {
 
   @override
   Future<Sessao?> sessaoAtual() async {
-    // Sem armazenamento seguro de token ainda (decisão pendente:
-    // flutter_secure_storage). Sem token, o usuário precisa entrar.
-    if (!_api.hasToken) return null;
+    final token = await _armazenamento.lerToken();
+    if (token == null) return null;
+    _api.setToken(token);
     try {
-      return _sessao(await _api.get('/auth/eu'));
+      return await _sessao(await _api.get('/auth/eu'));
     } on ApiException catch (e) {
-      if (e.isUnauthorized) return null;
-      rethrow;
+      if (!e.isUnauthorized) rethrow;
+      await _armazenamento.apagarToken();
+      return null;
     }
   }
 
@@ -69,7 +75,10 @@ class ApiAuthRepository implements AuthRepository {
       _api.post('/auth/recuperar-senha', {'email': email});
 
   @override
-  Future<void> sair() async => _api.setToken(null);
+  Future<void> sair() async {
+    _api.setToken(null);
+    await _armazenamento.apagarToken();
+  }
 }
 
 class ApiReferenciaRepository implements ReferenciaRepository {

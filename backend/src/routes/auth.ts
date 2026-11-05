@@ -1,9 +1,133 @@
-import { Router } from 'express'; import bcrypt from 'bcryptjs'; import jwt from 'jsonwebtoken';
-import { pool } from '../config/db.js'; import { env } from '../config/env.js'; import { asyncHandler, ApiError } from '../middlewares/error-handler.js'; import { requireAuth } from '../middlewares/auth.js'; import { loginSchema, profileSchema, registerSchema } from '../schemas/api.js'; import { uuid, toJson } from '../services/helpers.js';
+import bcrypt from 'bcryptjs';
+import { Router } from 'express';
+import jwt from 'jsonwebtoken';
+import { createHash, randomBytes } from 'node:crypto';
+import { pool } from '../config/db.js';
+import { env } from '../config/env.js';
+import { requireAuth } from '../middlewares/auth.js';
+import { ApiError } from '../middlewares/error-handler.js';
+import { cadastroSchema, loginSchema, recuperarSenhaSchema, redefinirSenhaSchema } from '../schemas/api.js';
+import { obterTime } from '../services/consultas.js';
+import { enviarCodigoRecuperacao } from '../services/email.js';
+import { consultar, dataSql, emTransacao, uuid, type Executor } from '../services/helpers.js';
+import { mapearUsuario } from '../services/mapeadores.js';
+
 export const authRouter = Router();
-const publicUser = (r: any) => ({ userId: r.user_id, email: r.email, displayName: r.display_name, phoneE164: r.phone_e164, accountStatusCode: r.account_status_code, createdAtUtc: r.created_at_utc });
-const tokenFor = (userId: string) => jwt.sign({}, env.JWT_SECRET, { subject: userId, expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'] });
-authRouter.post('/register', asyncHandler(async (req, res) => { const body = registerSchema.parse(req.body); const hash = await bcrypt.hash(body.password, 12); const userId = uuid(); await pool.execute('INSERT INTO users (user_id,email,display_name,phone_e164,password_hash,account_status_code) VALUES (?,?,?,?,?,?)', [userId, body.email, body.displayName, body.phoneE164 ?? null, hash, 'active']); const [rows] = await pool.execute<any[]>('SELECT * FROM users WHERE user_id=?', [userId]); res.status(201).json({ data: { user: publicUser(toJson(rows[0])), token: tokenFor(userId) } }); }));
-authRouter.post('/login', asyncHandler(async (req, res) => { const body = loginSchema.parse(req.body); const [rows] = await pool.execute<any[]>('SELECT * FROM users WHERE email=? AND deleted_at_utc IS NULL', [body.email]); const user = rows[0]; if (!user?.password_hash || !(await bcrypt.compare(body.password, user.password_hash))) throw new ApiError(401, 'E-mail ou senha inválidos.'); if (user.account_status_code !== 'active') throw new ApiError(403, 'Esta conta não está ativa.'); res.json({ data: { user: publicUser(toJson(user)), token: tokenFor(user.user_id) } }); }));
-authRouter.get('/me', requireAuth, asyncHandler(async (req, res) => { const [rows] = await pool.execute<any[]>('SELECT * FROM users WHERE user_id=? AND deleted_at_utc IS NULL', [req.auth!.userId]); if (!rows[0]) throw new ApiError(404, 'Usuário não encontrado.'); res.json({ data: publicUser(toJson(rows[0])) }); }));
-authRouter.patch('/me', requireAuth, asyncHandler(async (req, res) => { const body = profileSchema.parse(req.body); if (!Object.keys(body).length) throw new ApiError(400, 'Informe ao menos um campo para atualizar.'); const fields: string[] = [], values: any[] = []; if ('displayName' in body) { fields.push('display_name=?'); values.push(body.displayName); } if ('phoneE164' in body) { fields.push('phone_e164=?'); values.push(body.phoneE164 ?? null); } values.push(req.auth!.userId); await pool.execute(`UPDATE users SET ${fields.join(', ')} WHERE user_id=? AND deleted_at_utc IS NULL`, values); const [rows] = await pool.execute<any[]>('SELECT * FROM users WHERE user_id=?', [req.auth!.userId]); res.json({ data: publicUser(toJson(rows[0])) }); }));
+
+const CUSTO_BCRYPT = 12;
+/** Comparado quando o e-mail não existe, para o tempo de resposta não revelar isso. */
+const HASH_INEXISTENTE = '$2b$12$C6UzMDM.H6dfI/f/IKcEeO7ZzCqmfWkCjD6Jv3c0Fh1VqMFnCwQ5K';
+const VALIDADE_CODIGO_MS = 60 * 60_000;
+
+const gerarToken = (idUsuario: string) =>
+  jwt.sign({}, env.JWT_SECRET, {
+    subject: idUsuario,
+    algorithm: 'HS256',
+    expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'],
+  });
+
+const hashCodigo = (codigo: string) => createHash('sha256').update(codigo).digest();
+
+/** Capitão + time, no formato de `Sessao` do app. */
+async function sessao(db: Executor, idUsuario: string) {
+  const [usuario] = await consultar(db, 'SELECT * FROM usuarios WHERE id_usuario = ?', [idUsuario]);
+  if (!usuario) throw new ApiError(401, 'Sessão inválida ou expirada.', 'UNAUTHORIZED');
+  const [linhaTime] = await consultar(
+    db,
+    'SELECT id_time FROM times WHERE id_capitao = ? AND data_arquivamento IS NULL',
+    [idUsuario],
+  );
+  if (!linhaTime) throw new ApiError(403, 'Sua conta não possui um time ativo.', 'FORBIDDEN');
+  return { usuario: mapearUsuario(usuario), time: await obterTime(db, linhaTime.id_time, true) };
+}
+
+// Cria o capitão, o time e as modalidades numa única transação.
+authRouter.post('/cadastro', async (req, res) => {
+  const { usuario, time } = cadastroSchema.parse(req.body);
+  const hashSenha = await bcrypt.hash(usuario.senha, CUSTO_BCRYPT);
+  const idUsuario = uuid();
+  const idTime = uuid();
+
+  await emTransacao(async (db) => {
+    await db.execute(
+      `INSERT INTO usuarios (id_usuario, nome, email, hash_senha, telefone, cidade, sigla_estado)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [idUsuario, usuario.nome, usuario.email, hashSenha, usuario.telefone, usuario.cidade, usuario.siglaEstado],
+    );
+    await db.execute(
+      `INSERT INTO times (id_time, id_capitao, nome, cidade, sigla_estado, quantidade_jogadores,
+                          id_categoria_etaria, id_nivel_tecnico, telefone_contato)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        idTime, idUsuario, time.nome, time.cidade, time.siglaEstado, time.quantidadeJogadores,
+        time.idCategoriaEtaria, time.idNivelTecnico, usuario.telefone,
+      ],
+    );
+    await db.execute(
+      `INSERT INTO times_modalidades (id_time, id_modalidade)
+       VALUES ${time.idsModalidades.map(() => '(?, ?)').join(', ')}`,
+      time.idsModalidades.flatMap((id) => [idTime, id]),
+    );
+  });
+
+  res.status(201).json({ data: { token: gerarToken(idUsuario), ...(await sessao(pool, idUsuario)) } });
+});
+
+authRouter.post('/login', async (req, res) => {
+  const { email, senha } = loginSchema.parse(req.body);
+  const [usuario] = await consultar(
+    pool,
+    'SELECT id_usuario, hash_senha, status_conta FROM usuarios WHERE email = ? AND data_exclusao IS NULL',
+    [email],
+  );
+  const senhaCorreta = await bcrypt.compare(senha, usuario?.hash_senha ?? HASH_INEXISTENTE);
+  if (!usuario || !senhaCorreta) throw new ApiError(401, 'E-mail ou senha inválidos.', 'UNAUTHORIZED');
+  if (usuario.status_conta !== 'ativa') throw new ApiError(403, 'Esta conta não está ativa.', 'FORBIDDEN');
+  res.json({ data: { token: gerarToken(usuario.id_usuario), ...(await sessao(pool, usuario.id_usuario)) } });
+});
+
+authRouter.get('/eu', requireAuth, async (req, res) => {
+  res.json({ data: await sessao(pool, req.auth!.idUsuario) });
+});
+
+// Responde sempre 202, para não revelar quais e-mails estão cadastrados.
+authRouter.post('/recuperar-senha', async (req, res) => {
+  const { email } = recuperarSenhaSchema.parse(req.body);
+  const [usuario] = await consultar(
+    pool,
+    "SELECT id_usuario FROM usuarios WHERE email = ? AND status_conta = 'ativa'",
+    [email],
+  );
+  if (usuario) {
+    const codigo = randomBytes(32).toString('hex');
+    await pool.execute(
+      `INSERT INTO codigos_recuperacao_senha (id_codigo, id_usuario, hash_codigo, data_expiracao)
+       VALUES (?, ?, ?, ?)`,
+      [uuid(), usuario.id_usuario, hashCodigo(codigo), dataSql(new Date(Date.now() + VALIDADE_CODIGO_MS))],
+    );
+    await enviarCodigoRecuperacao(email, codigo);
+  }
+  res.status(202).end();
+});
+
+authRouter.post('/redefinir-senha', async (req, res) => {
+  const { codigo, novaSenha } = redefinirSenhaSchema.parse(req.body);
+  const hashSenha = await bcrypt.hash(novaSenha, CUSTO_BCRYPT);
+  await emTransacao(async (db) => {
+    const [registro] = await consultar(
+      db,
+      `SELECT id_codigo, id_usuario FROM codigos_recuperacao_senha
+        WHERE hash_codigo = ? AND data_uso IS NULL AND data_expiracao > UTC_TIMESTAMP(3)
+        FOR UPDATE`,
+      [hashCodigo(codigo)],
+    );
+    if (!registro) throw new ApiError(400, 'Código inválido ou expirado.', 'VALIDATION_ERROR');
+    await db.execute('UPDATE usuarios SET hash_senha = ? WHERE id_usuario = ?', [hashSenha, registro.id_usuario]);
+    await db.execute(
+      `UPDATE codigos_recuperacao_senha SET data_uso = UTC_TIMESTAMP(3) WHERE id_usuario = ? AND data_uso IS NULL`,
+      [registro.id_usuario],
+    );
+  });
+  res.status(204).end();
+});
+

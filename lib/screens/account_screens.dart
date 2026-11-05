@@ -472,7 +472,10 @@ class NotificationsScreen extends StatelessWidget {
                   for (var i = 0; i < lista.length; i++) ...[
                     InkWell(
                       onTap: () {
-                        if (!lista[i].lida) repo.marcarComoLida(lista[i].id);
+                        if (!lista[i].lida) {
+                          // Falha ao marcar não deve impedir abrir o destino.
+                          repo.marcarComoLida(lista[i].id).catchError((_) {});
+                        }
                         onOpen(lista[i]);
                       },
                       child: Padding(
@@ -1294,8 +1297,8 @@ class _AuthScreenState extends State<AuthScreen> {
         ),
         validator: (v) {
           final n = int.tryParse(v ?? '');
-          return n == null || n < 1 || n > 60
-              ? 'Informe a quantidade de jogadores'
+          return n == null || n < 5 || n > 60
+              ? 'Informe de 5 a 60 jogadores'
               : null;
         },
       ),

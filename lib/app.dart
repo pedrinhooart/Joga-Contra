@@ -21,6 +21,9 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
+  // Vive com a tela: o diálogo ainda o usa durante a animação de fechar.
+  final _nomeTime = TextEditingController();
+
   static const _paginasAuth = {'login', 'register', 'forgot'};
 
   String page = 'home', gameTab = 'Todos';
@@ -31,6 +34,12 @@ class _AppShellState extends State<AppShell> {
 
   /// Incrementado após alterações para recarregar a tela atual.
   int versao = 0;
+
+  @override
+  void dispose() {
+    _nomeTime.dispose();
+    super.dispose();
+  }
 
   static const titles = <String, String>{
     'home': 'Início',
@@ -425,13 +434,13 @@ class _AppShellState extends State<AppShell> {
   };
 
   Future<void> _editProfile() async {
-    final controller = TextEditingController(text: app.time!.nome);
+    _nomeTime.text = app.time!.nome;
     final value = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Seu time, do seu jeito.'),
         content: TextField(
-          controller: controller,
+          controller: _nomeTime,
           decoration: const InputDecoration(labelText: 'Nome do time'),
         ),
         actions: [
@@ -440,13 +449,12 @@ class _AppShellState extends State<AppShell> {
             child: const Text('Cancelar'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text),
+            onPressed: () => Navigator.pop(ctx, _nomeTime.text),
             child: const Text('Salvar perfil'),
           ),
         ],
       ),
     );
-    controller.dispose();
     if (value == null || value.trim().isEmpty || !mounted) return;
     final ok = await _executar(() async {
       await app.atualizarTime(AtualizacaoTime(nome: value.trim()));

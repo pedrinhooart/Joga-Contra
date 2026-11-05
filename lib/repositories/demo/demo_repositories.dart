@@ -1,3 +1,4 @@
+import '../../core/formatters.dart';
 import '../../models/anuncio_partida.dart';
 import '../../models/notificacao.dart';
 import '../../models/partida.dart';
@@ -535,9 +536,7 @@ class DemoBanco {
     time: meuTime.resumo,
     modalidade: _ref(referencias.modalidades, r.idModalidade),
     categoriaEtaria: _ref(referencias.categoriasEtarias, r.idCategoriaEtaria),
-    nivelTecnico: r.idNivelTecnico == null
-        ? null
-        : _ref(referencias.niveisTecnicos, r.idNivelTecnico),
+    nivelTecnico: _ref(referencias.niveisTecnicos, r.idNivelTecnico),
     mandoCampo: r.idMandoCampo == null
         ? null
         : _ref(referencias.mandosCampo, r.idMandoCampo),
@@ -687,6 +686,16 @@ class _DemoAnuncios implements AnuncioRepository {
               f.raioKm == null ||
               a.distanciaKm == null ||
               a.distanciaKm! <= f.raioKm!,
+        )
+        .where(
+          (a) =>
+              f.cidade == null ||
+              a.cidade.toLowerCase().startsWith(f.cidade!.toLowerCase()),
+        )
+        .where(
+          (a) =>
+              f.horario == null ||
+              Formatos.hora(a.dataHoraInicio).compareTo(f.horario!) >= 0,
         )
         .where(
           (a) =>

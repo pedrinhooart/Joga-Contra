@@ -115,7 +115,7 @@ class RascunhoAnuncio {
   const RascunhoAnuncio({
     required this.idModalidade,
     required this.idCategoriaEtaria,
-    this.idNivelTecnico,
+    required this.idNivelTecnico,
     this.idMandoCampo,
     required this.quantidadeJogadores,
     required this.dataHoraInicio,
@@ -128,8 +128,8 @@ class RascunhoAnuncio {
     this.descricao,
   });
 
-  final int idModalidade, idCategoriaEtaria;
-  final int? idNivelTecnico, idMandoCampo;
+  final int idModalidade, idCategoriaEtaria, idNivelTecnico;
+  final int? idMandoCampo;
   final int quantidadeJogadores;
   final DateTime dataHoraInicio;
   final String cidade, siglaEstado;
@@ -167,12 +167,16 @@ class FiltroAnuncios {
     this.raioKm,
     this.siglaEstado,
     this.cidade,
+    this.horario,
   });
   final String? texto;
   final int? idModalidade, idCategoriaEtaria, idNivelTecnico;
   final DateTime? data;
   final int? raioKm;
   final String? siglaEstado, cidade;
+
+  /// Partidas a partir deste horário (HH:mm), no fuso do aparelho.
+  final String? horario;
 
   Map<String, Object?> toQuery() => {
     'texto': texto,
@@ -185,5 +189,9 @@ class FiltroAnuncios {
     'raioKm': raioKm,
     'siglaEstado': siglaEstado,
     'cidade': cidade,
+    'horario': horario,
+    // Data e horário são os do aparelho; o banco guarda UTC.
+    if (data != null || horario != null)
+      'fusoMinutos': (data ?? DateTime.now()).timeZoneOffset.inMinutes,
   };
 }

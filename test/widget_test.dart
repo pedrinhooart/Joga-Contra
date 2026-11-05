@@ -75,6 +75,54 @@ void main() {
     expect(find.text('Partida confirmada!'), findsOneWidget);
   });
 
+  testWidgets('aplicar filtros com o teclado aberto não quebra a tela', (
+    tester,
+  ) async {
+    await _abrirApp(tester);
+    // A fonte de teste é mais larga que a real: sem isto, os botões da folha transbordam.
+    tester.view.physicalSize = const Size(700, 900);
+    await tester.tap(find.text('Buscar').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Filtros'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Cidade'),
+      'São Paulo',
+    );
+    await tester.tap(find.text('Aplicar filtros'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('Filtrar jogos'), findsNothing);
+    expect(find.text('Tem jogo esperando pelo seu time.'), findsOneWidget);
+
+    // Reabrir mostra o filtro aplicado.
+    await tester.tap(find.text('Filtros'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextField, 'São Paulo'), findsOneWidget);
+  });
+
+  testWidgets('editar o nome do time no diálogo não quebra a tela', (
+    tester,
+  ) async {
+    await _abrirApp(tester);
+    await tester.tap(find.text('Perfil').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.edit_outlined));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Nome do time'),
+      'Novo Nome FC',
+    );
+    await tester.tap(find.text('Salvar perfil'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('Novo Nome FC'), findsWidgets);
+  });
+
   testWidgets('sair da conta leva para a tela de entrar', (tester) async {
     await _abrirApp(tester);
     await tester.tap(find.text('Perfil').last);

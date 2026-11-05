@@ -1,11 +1,65 @@
-import type { PoolConnection } from 'mysql2/promise';
+import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'node:crypto';
-import { ApiError } from '../middlewares/error-handler.js';
+import { pool } from '../config/db.js';
+
+export type Linha = Record<string, any>;
+export type Executor = Pick<Pool | PoolConnection, 'execute'>;
+
 export const uuid = () => randomUUID();
-export async function requireActiveMembership(db: PoolConnection, teamId: string, userId: string, managerOnly = false) {
-  const [rows] = await db.execute<any[]>('SELECT role_code FROM team_members WHERE team_id=? AND user_id=? AND revoked_at_utc IS NULL', [teamId, userId]);
-  if (!rows.length || (managerOnly && !['owner', 'manager'].includes(rows[0].role_code))) throw new ApiError(403, 'Você não tem permissão para administrar este time.');
+
+/** Consulta parametrizada (prepared statement). */
+export async function consultar(db: Executor, sql: string, params: unknown[] = []): Promise<Linha[]> {
+  const [linhas] = await db.execute<RowDataPacket[]>(sql, params as any[]);
+  return linhas;
 }
-export const paging = (page: number, limit: number) => ({ offset: (page - 1) * limit, page, limit });
-export const toJson = (row: any) => row && Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v instanceof Date ? v.toISOString() : v]));
-export const toJsonList = (rows: any[]) => rows.map(toJson);
+
+/** Executa `acao` numa transação, com rollback em caso de erro. */
+export async function emTransacao<T>(acao: (db: PoolConnection) => Promise<T>): Promise<T> {
+  const db = await pool.getConnection();
+  try {
+    await db.beginTransaction();
+    const resultado = await acao(db);
+    await db.commit();
+    return resultado;
+  } catch (erro) {
+    await db.rollback();
+    throw erro;
+  } finally {
+    db.release();
+  }
+}
+
+/** `?, ?, ?` para cláusulas IN. */
+export const marcadores = (quantidade: number) => Array(quantidade).fill('?').join(', ');
+
+/**
+ * LIMIT/OFFSET interpolados: o protocolo binário do MySQL rejeita números como
+ * parâmetro de LIMIT. Os valores são inteiros validados pelo zod.
+ */
+export const limiteSql = (pagina: number, limite: number) =>
+  `LIMIT ${Math.trunc(limite)} OFFSET ${Math.trunc((pagina - 1) * limite)}`;
+
+/** Date -> texto UTC aceito por DATETIME(3). */
+export const dataSql = (data: Date) => data.toISOString().slice(0, 23).replace('T', ' ');
+
+export const dataIso = (valor: unknown): string | null =>
+  valor instanceof Date ? valor.toISOString() : null;
+
+/** Escapa curingas de LIKE vindos do usuário. */
+export const escaparLike = (texto: string) => texto.replace(/[\\%_]/g, '\\$&');
+
+type NovaNotificacao = {
+  idDestinatario: string;
+  tipo: 'solicitacao_recebida' | 'mensagem_recebida';
+  titulo: string;
+  mensagem: string;
+  idSolicitacao: string;
+};
+
+/** Notificações geradas pela API (as demais são criadas pelos procedimentos do banco). */
+export const criarNotificacao = (db: Executor, n: NovaNotificacao) =>
+  db.execute(
+    `INSERT INTO notificacoes (id_notificacao, id_usuario_destinatario, tipo, titulo, mensagem, id_solicitacao)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [uuid(), n.idDestinatario, n.tipo, n.titulo, n.mensagem.slice(0, 500), n.idSolicitacao],
+  );

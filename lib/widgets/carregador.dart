@@ -25,7 +25,11 @@ class Carregador<T> extends StatefulWidget {
 class _CarregadorState<T> extends State<Carregador<T>> {
   late Future<T> _future = widget.carregar();
 
-  void _recarregar() => setState(() => _future = widget.carregar());
+  void _recarregar() {
+    setState(() {
+      _future = widget.carregar();
+    });
+  }
 
   @override
   Widget build(BuildContext context) => FutureBuilder<T>(

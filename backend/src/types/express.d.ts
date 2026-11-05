@@ -1,2 +1,8 @@
-declare global { namespace Express { interface Request { auth?: { userId: string }; } } }
+declare global {
+  namespace Express {
+    interface Request {
+      auth?: { idUsuario: string; idTime: string | null };
+    }
+  }
+}
 export {};
