@@ -53,6 +53,12 @@ void main() {
       280,
       scrollable: _listaVertical,
     );
+    // Textos maiores: garante o botão inteiro acima da barra de navegação.
+    await tester.ensureVisible(find.text('Ver detalhes').first);
+    await tester.pumpAndSettle();
+    final y = tester.getCenter(find.text('Ver detalhes').first).dy;
+    await tester.drag(_listaVertical, Offset(0, 420 - y));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Ver detalhes').first);
     await tester.pumpAndSettle();
     await tester.drag(find.byType(ListView).first, const Offset(0, -600));
@@ -110,7 +116,7 @@ void main() {
     await tester.tap(find.text('Perfil').last);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.edit_outlined));
+    await tester.tap(find.byTooltip('Editar nome do time'));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.widgetWithText(TextField, 'Nome do time'),

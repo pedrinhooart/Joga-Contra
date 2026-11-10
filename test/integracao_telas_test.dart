@@ -53,10 +53,6 @@ Future<(String, String)> _capitaoComAnuncio(String marca) async {
       email: email,
       senha: _senha,
       nomeTime: 'Dono $marca',
-      idModalidade: refs.modalidades.first.id,
-      idCategoriaEtaria: refs.categoriasEtarias.last.id,
-      idNivelTecnico: refs.niveisTecnicos.first.id,
-      quantidadeJogadores: 12,
       cidade: 'São Paulo',
       siglaEstado: 'SP',
     ),
@@ -82,7 +78,6 @@ Future<String> _capitaoSemAnuncio(String marca) async {
     ApiClient(baseUrl: _url),
     armazenamento: ArmazenamentoEmMemoria(),
   );
-  final refs = await repos.referencias.carregar();
   final email = 'teste.homologacao.visitante.$marca@example.com';
   await repos.auth.cadastrar(
     CadastroCapitao(
@@ -90,9 +85,6 @@ Future<String> _capitaoSemAnuncio(String marca) async {
       email: email,
       senha: _senha,
       nomeTime: 'Visitante $marca',
-      idModalidade: refs.modalidades.last.id,
-      idCategoriaEtaria: refs.categoriasEtarias.last.id,
-      quantidadeJogadores: 10,
       cidade: 'Campinas',
       siglaEstado: 'SP',
     ),
@@ -191,8 +183,6 @@ void main() {
 
       await tester.tap(find.text('Perfil').last);
       await _esperarTexto(tester, find.text('Visitante $marca'));
-      expect(find.text('10 jogadores'), findsOneWidget);
-      expect(find.text('Futebol de quadra'), findsOneWidget);
       expect(find.text('Nenhuma partida realizada ainda.'), findsOneWidget);
 
       // O dono entra e recebe a notificação real da solicitação.
@@ -222,10 +212,18 @@ void main() {
 
       await tester.tap(find.text('Início').last);
       await _esperarTexto(tester, find.text('Próxima partida'));
-      await _esperarTexto(tester, find.text('Ver partida'));
+      // Fontes maiores: o cartão da partida fica mais abaixo na lista.
+      await tester.scrollUntilVisible(
+        find.text('Ver partida'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('Ver partida'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox());
-      await tester.pump(const Duration(seconds: 20)); // timers de timeout do ApiClient
+      await tester.pump(
+        const Duration(seconds: 20),
+      ); // timers de timeout do ApiClient
     },
   );
 }

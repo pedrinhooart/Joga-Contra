@@ -76,6 +76,15 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Envia a nova foto do time. Se falhar, a sessão segue com a foto atual.
+  Future<void> enviarEscudo(ImagemSelecionada imagem) async {
+    final atual = _sessao;
+    if (atual == null) return;
+    final time = await repositorios.times.enviarEscudo(atual.time.id, imagem);
+    _sessao = Sessao(usuario: atual.usuario, time: time, token: atual.token);
+    notifyListeners();
+  }
+
   /// Recarrega o perfil do time (estatísticas mudam após partidas/avaliações).
   Future<void> recarregarTime() async {
     final atual = _sessao;

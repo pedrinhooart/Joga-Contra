@@ -5,6 +5,9 @@ const email = z.string().trim().toLowerCase().email().max(254);
 const senha = z.string().min(8).max(72); // bcrypt considera até 72 bytes
 const quantidadeTime = z.number().int().min(5).max(60);
 const idsModalidades = z.array(idReferencia).min(1).max(10).transform((v) => [...new Set(v)]);
+// No cadastro são opcionais: modalidade, categoria, nível e quantidade de cada
+// jogo são informados no anúncio.
+const idsModalidadesCadastro = z.array(idReferencia).max(10).default([]).transform((v) => [...new Set(v)]);
 
 export const cadastroSchema = z.object({
   usuario: z.object({
@@ -17,10 +20,10 @@ export const cadastroSchema = z.object({
   }),
   time: z.object({
     nome: z.string().trim().min(1).max(120),
-    idsModalidades,
-    idCategoriaEtaria: idReferencia,
+    idsModalidades: idsModalidadesCadastro,
+    idCategoriaEtaria: idReferencia.nullish().transform((v) => v ?? null),
     idNivelTecnico: idReferencia.nullish().transform((v) => v ?? null),
-    quantidadeJogadores: quantidadeTime,
+    quantidadeJogadores: quantidadeTime.nullish().transform((v) => v ?? null),
     cidade: z.string().trim().min(1).max(100),
     siglaEstado,
   }),
@@ -33,7 +36,8 @@ export const redefinirSenhaSchema = z.object({ codigo: z.string().min(16).max(12
 export const atualizacaoTimeSchema = z
   .object({
     nome: z.string().trim().min(1).max(120),
-    descricao: z.string().trim().max(2000),
+    // Vazia remove a descrição (o perfil volta a mostrar o convite para escrever).
+    descricao: z.string().trim().max(2000).transform((v) => v || null),
     quantidadeJogadores: quantidadeTime,
     idCategoriaEtaria: idReferencia,
     idNivelTecnico: idReferencia,

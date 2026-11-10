@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 
@@ -39,6 +40,16 @@ class ApiClient {
       _send('PATCH', path, body: body);
   Future<dynamic> delete(String path) => _send('DELETE', path);
 
+  /// Envia um arquivo (ex.: imagem) como corpo binário, com mais tempo limite.
+  Future<dynamic> putBytes(String path, Uint8List bytes, String contentType) =>
+      _send(
+        'PUT',
+        path,
+        bytes: bytes,
+        contentType: contentType,
+        timeout: ApiConfig.uploadTimeout,
+      );
+
   Uri _uri(String path, Map<String, Object?>? query) {
     final params = <String, String>{
       for (final e in (query ?? const {}).entries)
@@ -53,18 +64,23 @@ class ApiClient {
     String path, {
     Object? body,
     Map<String, Object?>? query,
+    Uint8List? bytes,
+    String? contentType,
+    Duration? timeout,
   }) async {
     final headers = <String, String>{'Accept': 'application/json'};
     if (body != null) headers['Content-Type'] = 'application/json';
+    if (bytes != null) headers['Content-Type'] = contentType!;
     if (_token != null) headers['Authorization'] = 'Bearer $_token';
     final http.Response response;
     try {
       final request = http.Request(method, _uri(path, query))
         ..headers.addAll(headers);
       if (body != null) request.body = jsonEncode(body);
+      if (bytes != null) request.bodyBytes = bytes;
       final streamed = await _client
           .send(request)
-          .timeout(ApiConfig.requestTimeout);
+          .timeout(timeout ?? ApiConfig.requestTimeout);
       response = await http.Response.fromStream(streamed);
     } catch (_) {
       throw ApiException(

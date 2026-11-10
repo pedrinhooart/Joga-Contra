@@ -100,6 +100,12 @@ class ApiTimeRepository implements TimeRepository {
       Time.fromJson(
         await _api.patch('/times/$idTime', dados.toJson()) as _Json,
       );
+  @override
+  Future<Time> enviarEscudo(String idTime, ImagemSelecionada imagem) async =>
+      Time.fromJson(
+        await _api.putBytes('/times/$idTime/escudo', imagem.bytes, imagem.tipo)
+            as _Json,
+      );
 }
 
 class ApiAnuncioRepository implements AnuncioRepository {

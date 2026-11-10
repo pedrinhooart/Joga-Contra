@@ -1,3 +1,4 @@
+import 'dart:convert';
 import '../../core/formatters.dart';
 import '../../models/anuncio_partida.dart';
 import '../../models/notificacao.dart';
@@ -575,7 +576,6 @@ class _DemoAuth implements AuthRepository {
       id: db.usuario.id,
       nome: d.nome,
       email: d.email,
-      telefone: d.telefone,
       cidade: d.cidade,
       siglaEstado: d.siglaEstado,
     );
@@ -585,20 +585,7 @@ class _DemoAuth implements AuthRepository {
       nome: d.nomeTime,
       cidade: d.cidade,
       siglaEstado: d.siglaEstado,
-      quantidadeJogadores: d.quantidadeJogadores,
-      modalidades: [
-        db.referencias.modalidades.firstWhere((m) => m.id == d.idModalidade),
-      ],
-      categoriaEtaria: db.referencias.categoriasEtarias.firstWhere(
-        (c) => c.id == d.idCategoriaEtaria,
-      ),
-      nivelTecnico: d.idNivelTecnico == null
-          ? null
-          : db.referencias.niveisTecnicos.firstWhere(
-              (n) => n.id == d.idNivelTecnico,
-            ),
       nomeCapitao: d.nome,
-      telefoneContato: d.telefone,
     );
     _logado = true;
     return _sessao;
@@ -645,9 +632,22 @@ class _DemoTimes implements TimeRepository {
 
   @override
   Future<Time> atualizar(String idTime, AtualizacaoTime dados) async {
-    db.meuTime = db.meuTime.copyWith(nome: dados.nome);
+    db.meuTime = db.meuTime.copyWith(
+      nome: dados.nome,
+      descricao: dados.descricao,
+    );
     final resumo = db.meuTime.resumo;
     db.times[resumo.id] = resumo;
+    return db.meuTime;
+  }
+
+  /// Demonstração: a foto fica em memória, como endereço `data:`.
+  @override
+  Future<Time> enviarEscudo(String idTime, ImagemSelecionada imagem) async {
+    db.meuTime = db.meuTime.copyWith(
+      urlEscudo: 'data:${imagem.tipo};base64,${base64Encode(imagem.bytes)}',
+    );
+    db.times[idTime] = db.meuTime.resumo;
     return db.meuTime;
   }
 }

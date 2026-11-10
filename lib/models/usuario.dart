@@ -32,27 +32,19 @@ class Usuario {
 }
 
 /// Dados enviados em `POST /auth/cadastro`: cria o usuário (capitão) e o time.
+/// Modalidade, categoria, nível e quantidade de cada jogo ficam no anúncio.
 class CadastroCapitao {
   const CadastroCapitao({
     required this.nome,
     required this.email,
     required this.senha,
-    this.telefone,
     required this.nomeTime,
-    required this.idModalidade,
-    required this.idCategoriaEtaria,
-    this.idNivelTecnico,
-    required this.quantidadeJogadores,
     required this.cidade,
     required this.siglaEstado,
   });
 
   final String nome, email, senha;
-  final String? telefone;
   final String nomeTime;
-  final int idModalidade, idCategoriaEtaria;
-  final int? idNivelTecnico;
-  final int quantidadeJogadores;
   final String cidade, siglaEstado;
 
   Map<String, dynamic> toJson() => {
@@ -60,18 +52,9 @@ class CadastroCapitao {
       'nome': nome,
       'email': email,
       'senha': senha,
-      'telefone': telefone,
       'cidade': cidade,
       'siglaEstado': siglaEstado,
     },
-    'time': {
-      'nome': nomeTime,
-      'idsModalidades': [idModalidade],
-      'idCategoriaEtaria': idCategoriaEtaria,
-      'idNivelTecnico': idNivelTecnico,
-      'quantidadeJogadores': quantidadeJogadores,
-      'cidade': cidade,
-      'siglaEstado': siglaEstado,
-    },
+    'time': {'nome': nomeTime, 'cidade': cidade, 'siglaEstado': siglaEstado},
   };
 }

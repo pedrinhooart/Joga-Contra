@@ -34,8 +34,11 @@ export const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
   if (error instanceof ApiError) {
     return responder(res, error.status, error.code, error.message);
   }
-  // Corpo JSON malformado ou grande demais (express.json).
-  if (error?.type === 'entity.parse.failed' || error?.type === 'entity.too.large') {
+  if (error?.type === 'entity.too.large') {
+    return responder(res, 413, 'PAYLOAD_TOO_LARGE', 'O envio passa do tamanho máximo permitido.');
+  }
+  // Corpo JSON malformado (express.json).
+  if (error?.type === 'entity.parse.failed') {
     return responder(res, 400, 'VALIDATION_ERROR', 'Corpo da requisição inválido.');
   }
 

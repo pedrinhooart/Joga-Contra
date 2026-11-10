@@ -28,6 +28,7 @@ Banco novo, em português, criado a partir de [docs/AUDITORIA_DADOS_DINAMICOS.md
 | 4 | [04_visoes.sql](04_visoes.sql) | 4 visões com os dados calculados para a API | Não (falha se já existirem) |
 | 5 | [05_validacao.sql](05_validacao.sql) | Somente `SELECT`/`EXPLAIN`: confere a estrutura e traz consultas de exemplo | Sim |
 | 6 | [06_testes_regras.sql](06_testes_regras.sql) | 59 testes automáticos das regras. **Somente em banco de teste** | Sim (limpa o que cria) |
+| 7 | [07_cadastro_simplificado.sql](07_cadastro_simplificado.sql) | Migração: categoria e quantidade de jogadores do time ficam opcionais (`vis_perfis_times` com `LEFT JOIN`). **Só para bancos criados antes**: 01 e 04 já trazem o resultado. Aplicada no `joga_contra_v2` em 10/11/2026 | Sim (idempotente) |
 
 Nenhum script contém `DROP DATABASE` ou `DROP TABLE`. O 06 remove apenas os registros e os procedimentos auxiliares `teste_*` que ele mesmo criou.
 

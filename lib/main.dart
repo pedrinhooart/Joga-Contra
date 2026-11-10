@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'app.dart';
 import 'state/app_state.dart';
 import 'theme/app_theme.dart';
+import 'theme/rolagem.dart';
+import 'theme/tipografia.dart';
 
 void main() => runApp(const JogaContraApp());
 
@@ -31,6 +33,14 @@ class _JogaContraAppState extends State<JogaContraApp> {
       title: 'Joga Contra',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
+      scrollBehavior: const RolagemSemEfeito(),
+      // Fontes maiores em todas as telas, mantendo a escala do sistema.
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          textScaler: EscalaDeLeitura(MediaQuery.textScalerOf(context)),
+        ),
+        child: child!,
+      ),
       home: const AppShell(),
     ),
   );

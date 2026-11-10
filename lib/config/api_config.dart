@@ -16,4 +16,16 @@ class ApiConfig {
   static const useDemoData = bool.fromEnvironment('USE_DEMO_DATA');
 
   static const requestTimeout = Duration(seconds: 15);
+
+  /// Envio de imagens: mais tempo que as demais requisições.
+  static const uploadTimeout = Duration(seconds: 60);
+
+  /// Endereço completo de um arquivo devolvido pela API (ex.: escudo do time).
+  /// A API guarda caminhos como `/api/arquivos/...`; endereços completos
+  /// (como os de um armazenamento na nuvem) são usados como vieram.
+  static String? urlArquivo(String? endereco) {
+    if (endereco == null || endereco.isEmpty) return null;
+    if (Uri.parse(endereco).hasScheme) return endereco;
+    return Uri.parse(baseUrl).resolve(endereco).toString();
+  }
 }

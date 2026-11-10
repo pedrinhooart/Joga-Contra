@@ -63,11 +63,13 @@ authRouter.post('/cadastro', async (req, res) => {
         time.idCategoriaEtaria, time.idNivelTecnico, usuario.telefone,
       ],
     );
-    await db.execute(
-      `INSERT INTO times_modalidades (id_time, id_modalidade)
-       VALUES ${time.idsModalidades.map(() => '(?, ?)').join(', ')}`,
-      time.idsModalidades.flatMap((id) => [idTime, id]),
-    );
+    if (time.idsModalidades.length > 0) {
+      await db.execute(
+        `INSERT INTO times_modalidades (id_time, id_modalidade)
+         VALUES ${time.idsModalidades.map(() => '(?, ?)').join(', ')}`,
+        time.idsModalidades.flatMap((id) => [idTime, id]),
+      );
+    }
   });
 
   res.status(201).json({ data: { token: gerarToken(idUsuario), ...(await sessao(pool, idUsuario)) } });

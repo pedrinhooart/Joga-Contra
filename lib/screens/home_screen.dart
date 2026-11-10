@@ -115,6 +115,7 @@ class HomeScreen extends StatelessWidget {
                 partida: proxima,
                 idMeuTime: time.id,
                 siglaMeuTime: time.siglaExibicao,
+                escudoMeuTime: time.urlEscudo,
                 nomeMeuTime: time.nome,
                 onOpen: () => onOpenPartida(proxima),
               ),
@@ -159,11 +160,13 @@ class _ProximaPartida extends StatelessWidget {
     required this.partida,
     required this.idMeuTime,
     required this.siglaMeuTime,
+    this.escudoMeuTime,
     required this.nomeMeuTime,
     required this.onOpen,
   });
   final Partida partida;
   final String idMeuTime, siglaMeuTime, nomeMeuTime;
+  final String? escudoMeuTime;
   final VoidCallback onOpen;
 
   @override
@@ -193,7 +196,7 @@ class _ProximaPartida extends StatelessWidget {
           const SizedBox(height: 13),
           Row(
             children: [
-              Crest(label: siglaMeuTime),
+              Crest(imagem: escudoMeuTime, label: siglaMeuTime),
               Expanded(
                 child: Text(
                   nomeMeuTime,
@@ -222,7 +225,10 @@ class _ProximaPartida extends StatelessWidget {
                   ),
                 ),
               ),
-              Crest(label: adversario.siglaExibicao),
+              Crest(
+                imagem: adversario.urlEscudo,
+                label: adversario.siglaExibicao,
+              ),
             ],
           ),
           const SizedBox(height: 10),
@@ -262,82 +268,93 @@ class _Hero extends StatelessWidget {
   const _Hero({required this.onSearch, required this.onCreate});
   final VoidCallback onSearch, onCreate;
   @override
+  // Altura mínima, não fixa: em telas estreitas ou com fonte maior, os botões
+  // quebram de linha e o banner cresce em vez de cortar o conteúdo.
   Widget build(BuildContext context) => Container(
-    height: 340,
     clipBehavior: Clip.antiAlias,
     decoration: BoxDecoration(
       color: AppColors.forest,
       borderRadius: BorderRadius.circular(13),
     ),
     child: Stack(
-      fit: StackFit.expand,
       children: [
         const Positioned.fill(
           child: IgnorePointer(
             child: CustomPaint(painter: PitchLinesPainter()),
           ),
         ),
-        const DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
-              colors: [AppColors.forest, Color(0xE6123D2B), Color(0x55123D2B)],
+        const Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [
+                  AppColors.forest,
+                  Color(0xE6123D2B),
+                  Color(0x55123D2B),
+                ],
+              ),
             ),
           ),
         ),
         Padding(
           padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'A BOLA VAI ROLAR',
-                style: TextStyle(
-                  color: Colors.white70,
-                  fontSize: 9,
-                  letterSpacing: 1.4,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 13),
-              const Text(
-                'O PRÓXIMO JOGO\nCOMEÇA AQUI.',
-                style: TextStyle(
-                  fontSize: 26,
-                  height: 1.03,
-                  fontWeight: FontWeight.w900,
-                  color: Colors.white,
-                  letterSpacing: .4,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Encontre times da sua região e marque\num amistoso de verdade.',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Color(0xFFD4E1D7),
-                  height: 1.45,
-                ),
-              ),
-              const Spacer(),
-              Wrap(
-                spacing: 8,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 300),
+            child: IntrinsicHeight(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ActionButton(
-                    'Buscar adversário',
-                    icon: Icons.search,
-                    onPressed: onSearch,
+                  const Text(
+                    'A BOLA VAI ROLAR',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 9,
+                      letterSpacing: 1.4,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                  ActionButton(
-                    'Anunciar jogo',
-                    outline: true,
-                    icon: Icons.add,
-                    onPressed: onCreate,
+                  const SizedBox(height: 13),
+                  const Text(
+                    'O PRÓXIMO JOGO\nCOMEÇA AQUI.',
+                    style: TextStyle(
+                      fontSize: 26,
+                      height: 1.03,
+                      fontWeight: FontWeight.w900,
+                      color: Colors.white,
+                      letterSpacing: .4,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Encontre times da sua região e marque\num amistoso de verdade.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFFD4E1D7),
+                      height: 1.45,
+                    ),
+                  ),
+                  const Spacer(),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      ActionButton(
+                        'Buscar adversário',
+                        icon: Icons.search,
+                        onPressed: onSearch,
+                      ),
+                      ActionButton(
+                        'Anunciar jogo',
+                        outline: true,
+                        icon: Icons.add,
+                        onPressed: onCreate,
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ],
+            ),
           ),
         ),
       ],

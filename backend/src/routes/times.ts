@@ -1,9 +1,13 @@
-import { Router } from 'express';
+import { randomUUID } from 'node:crypto';
+import express, { Router, type NextFunction, type Request, type Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import { pool } from '../config/db.js';
+import { env } from '../config/env.js';
 import { meuTime, requireAuth } from '../middlewares/auth.js';
 import { ApiError } from '../middlewares/error-handler.js';
 import { atualizacaoTimeSchema } from '../schemas/api.js';
 import { id } from '../schemas/common.js';
+import { armazenamento, LIMITE_IMAGEM_BYTES, TIPOS_IMAGEM, tipoDaImagem } from '../services/armazenamento.js';
 import { obterTime } from '../services/consultas.js';
 import { consultar, dataIso, emTransacao } from '../services/helpers.js';
 
@@ -54,6 +58,45 @@ timesRouter.patch('/:idTime', async (req, res) => {
 
   res.json({ data: await obterTime(pool, idTime, true) });
 });
+
+// Foto (escudo) do time: corpo binário JPEG, PNG ou WebP de até 2 MB.
+// Ordem segura: grava o arquivo novo, troca a referência no banco e só então
+// apaga o antigo. Qualquer falha antes disso mantém a foto atual.
+const imagemNoCorpo = express.raw({ type: Object.keys(TIPOS_IMAGEM), limit: LIMITE_IMAGEM_BYTES });
+const limitarEnvios =
+  env.NODE_ENV === 'test'
+    ? (_req: Request, _res: Response, next: NextFunction) => next()
+    : rateLimit({
+        windowMs: 15 * 60_000,
+        limit: 20,
+        standardHeaders: true,
+        legacyHeaders: false,
+        message: { error: { code: 'RATE_LIMIT', message: 'Muitos envios. Aguarde alguns minutos.' } },
+      });
+
+timesRouter.put('/:idTime/escudo', limitarEnvios, imagemNoCorpo, async (req, res) => {
+  const idTime = id.parse(req.params.idTime);
+  if (idTime !== meuTime(req)) throw new ApiError(403, 'Somente o capitão pode alterar este time.', 'FORBIDDEN');
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    throw new ApiError(415, 'Envie uma imagem JPEG, PNG ou WebP.', 'UNSUPPORTED_MEDIA_TYPE');
+  }
+  const tipo = tipoDaImagem(req.body);
+  if (!tipo) throw new ApiError(400, 'O arquivo enviado não é uma imagem JPEG, PNG ou WebP válida.', 'VALIDATION_ERROR');
+
+  const [atual] = await consultar(pool, 'SELECT url_escudo FROM times WHERE id_time = ?', [idTime]);
+  const endereco = await armazenamento.salvar('escudos', `${idTime}-${randomUUID()}.${TIPOS_IMAGEM[tipo]}`, req.body);
+  try {
+    await pool.execute('UPDATE times SET url_escudo = ? WHERE id_time = ?', [endereco, idTime]);
+  } catch (erro) {
+    await armazenamento.remover(endereco).catch(() => {});
+    throw erro;
+  }
+  if (atual?.url_escudo) {
+    await armazenamento.remover(atual.url_escudo).catch((e) => console.warn('Escudo antigo não removido:', e?.code));
+  }
+  res.json({ data: await obterTime(pool, idTime, true) });
+});
+
 
 timesRouter.get('/:idTime/avaliacoes', async (req, res) => {
   const idTime = id.parse(req.params.idTime);

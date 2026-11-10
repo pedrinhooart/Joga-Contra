@@ -145,6 +145,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           decoration: const InputDecoration(
             prefixIcon: Icon(Icons.search),
             hintText: 'Busque um time, cidade ou região',
+            // Em telas estreitas, quebra a linha em vez de cortar o texto.
+            hintMaxLines: 2,
           ),
         ),
         const SizedBox(height: 11),

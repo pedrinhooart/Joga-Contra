@@ -10,9 +10,11 @@ import 'screens/activity_screens.dart';
 import 'screens/discover_screen.dart';
 import 'screens/game_detail_screen.dart';
 import 'screens/home_screen.dart';
+import 'services/selecao_imagem.dart';
 import 'state/app_state.dart';
 import 'theme/app_theme.dart';
 import 'widgets/carregador.dart';
+import 'widgets/dialogo_foto_time.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
@@ -21,8 +23,12 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
-  // Vive com a tela: o diálogo ainda o usa durante a animação de fechar.
+  // Vivem com a tela: os diálogos ainda os usam durante a animação de fechar.
   final _nomeTime = TextEditingController();
+  final _descricaoTime = TextEditingController();
+
+  /// Mesmo limite exibido no campo; a API aceita até 2000.
+  static const _limiteDescricao = 500;
 
   static const _paginasAuth = {'login', 'register', 'forgot'};
 
@@ -38,6 +44,7 @@ class _AppShellState extends State<AppShell> {
   @override
   void dispose() {
     _nomeTime.dispose();
+    _descricaoTime.dispose();
     super.dispose();
   }
 
@@ -280,6 +287,8 @@ class _AppShellState extends State<AppShell> {
     ),
     'profile' => ProfileScreen(
       onEdit: _editProfile,
+      onEditFoto: _alterarFoto,
+      onEditDescricao: _editarDescricao,
       onGames: () => go('games'),
       onLogout: _sair,
     ),
@@ -461,6 +470,66 @@ class _AppShellState extends State<AppShell> {
       return true;
     });
     if (ok == true && mounted) notify('Perfil atualizado com sucesso!');
+  }
+
+  /// Galeria → prévia → confirmar envia; cancelar mantém a foto atual.
+  Future<void> _alterarFoto() async {
+    final ImagemSelecionada? imagem;
+    try {
+      imagem = await SelecaoDeImagem.selecionar();
+    } catch (e) {
+      if (mounted) notify('$e');
+      return;
+    }
+    if (imagem == null || !mounted) return; // fechou a galeria sem escolher
+    final salvou = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => DialogoFotoTime(
+        imagem: imagem!,
+        enviar: () => app.enviarEscudo(imagem!),
+      ),
+    );
+    if (salvou == true && mounted) notify('Foto do time atualizada!');
+  }
+
+  Future<void> _editarDescricao() async {
+    final atual = app.time!.descricao ?? '';
+    _descricaoTime.text = atual;
+    final value = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Sobre o time'),
+        content: TextField(
+          controller: _descricaoTime,
+          minLines: 3,
+          maxLines: 6,
+          maxLength: _limiteDescricao,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: const InputDecoration(
+            hintText: 'Conte a história do seu time para os adversários.',
+            helperText: 'Deixe em branco para remover a descrição.',
+            helperMaxLines: 2,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, _descricaoTime.text.trim()),
+            child: const Text('Salvar'),
+          ),
+        ],
+      ),
+    );
+    if (value == null || value == atual.trim() || !mounted) return;
+    final ok = await _executar(() async {
+      await app.atualizarTime(AtualizacaoTime(descricao: value));
+      return true;
+    });
+    if (ok == true && mounted) notify('Descrição atualizada!');
   }
 
   Future<void> _sair() async {

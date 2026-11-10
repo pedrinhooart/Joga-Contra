@@ -17,6 +17,8 @@ const schema = z.object({
   HORAS_PARTIDA_REALIZADA: z.coerce.number().int().min(0).default(3),
   /** Registros criados até esta data nunca são alterados pelas rotinas. Vazio: sem proteção. */
   ROTINAS_PRESERVAR_ATE: z.coerce.date().optional(),
+  /** Pasta das imagens enviadas (escudos). Relativa à pasta da API. */
+  ARQUIVOS_DIR: z.string().min(1).default('arquivos'),
 });
 
 export const env = schema.parse(process.env);

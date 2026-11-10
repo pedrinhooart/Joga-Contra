@@ -52,14 +52,10 @@ class _CreateGameScreenState extends State<CreateGameScreen> {
     _iniciado = true;
     final app = AppScope.of(context);
     final refs = app.referencias, time = app.time!;
-    modalidade =
-        e?.modalidade.id ??
-        time.modalidades.firstOrNull?.id ??
-        refs.modalidades.firstOrNull?.id;
-    categoria =
-        e?.categoriaEtaria.id ??
-        time.categoriaEtaria?.id ??
-        refs.categoriasEtarias.firstOrNull?.id;
+    // O cadastro não pede esses dados: sem eles no time, o capitão escolhe
+    // os do jogo (nada pré-marcado por engano). Times antigos mantêm o padrão.
+    modalidade = e?.modalidade.id ?? time.modalidades.firstOrNull?.id;
+    categoria = e?.categoriaEtaria.id ?? time.categoriaEtaria?.id;
     nivel = e?.nivelTecnico?.id ?? time.nivelTecnico?.id;
     mando = e?.mandoCampo?.id ?? refs.mandosCampo.firstOrNull?.id;
     siglaEstado = e?.siglaEstado ?? time.siglaEstado;
@@ -433,7 +429,10 @@ class _ConversaTile extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           child: Row(
             children: [
-              Crest(label: adversario.siglaExibicao),
+              Crest(
+                imagem: adversario.urlEscudo,
+                label: adversario.siglaExibicao,
+              ),
               const SizedBox(width: 11),
               Expanded(
                 child: Column(
@@ -559,6 +558,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 children: [
                   ListTile(
                     leading: Crest(
+                      imagem: adversario.urlEscudo,
                       label: adversario.siglaExibicao,
                       small: true,
                     ),
@@ -883,7 +883,11 @@ class GamesScreen extends StatelessWidget {
                     children: [
                       Row(
                         children: [
-                          Crest(label: time.siglaExibicao, small: true),
+                          Crest(
+                            imagem: time.urlEscudo,
+                            label: time.siglaExibicao,
+                            small: true,
+                          ),
                           const SizedBox(width: 7),
                           Expanded(
                             child: Text(
@@ -896,6 +900,7 @@ class GamesScreen extends StatelessWidget {
                           ),
                           if (item.adversario != null)
                             Crest(
+                              imagem: item.adversario!.urlEscudo,
                               label: item.adversario!.siglaExibicao,
                               small: true,
                             ),

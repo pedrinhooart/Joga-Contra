@@ -41,7 +41,7 @@ SELECT t.id_time, t.id_capitao, t.nome, t.sigla, t.url_escudo, t.cidade, t.sigla
        t.data_criacao, t.data_atualizacao
   FROM times t
   JOIN usuarios u ON u.id_usuario = t.id_capitao
-  JOIN categorias_etarias c ON c.id_categoria_etaria = t.id_categoria_etaria
+  LEFT JOIN categorias_etarias c ON c.id_categoria_etaria = t.id_categoria_etaria
   LEFT JOIN niveis_tecnicos n ON n.id_nivel_tecnico = t.id_nivel_tecnico
   JOIN vis_estatisticas_times e ON e.id_time = t.id_time
  WHERE t.data_arquivamento IS NULL;

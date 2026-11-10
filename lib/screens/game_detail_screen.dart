@@ -35,7 +35,10 @@ class GameDetailScreen extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Crest(label: anuncio.time.siglaExibicao),
+                    Crest(
+                      imagem: anuncio.time.urlEscudo,
+                      label: anuncio.time.siglaExibicao,
+                    ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
@@ -126,24 +129,27 @@ class GameDetailScreen extends StatelessWidget {
                       children: [
                         Icon(row.$1, size: 18, color: AppColors.green),
                         const SizedBox(width: 11),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              row.$2,
-                              style: const TextStyle(
-                                fontSize: 10,
-                                color: AppColors.muted,
+                        // Local ou endereço longo quebra a linha, sem estourar.
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                row.$2,
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: AppColors.muted,
+                                ),
                               ),
-                            ),
-                            Text(
-                              row.$3,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
+                              Text(
+                                row.$3,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ],
                     ),
@@ -207,7 +213,11 @@ class GameDetailScreen extends StatelessWidget {
           Panel(
             child: Column(
               children: [
-                Crest(label: time.siglaExibicao, ano: time.anoFundacao),
+                Crest(
+                  imagem: time.urlEscudo,
+                  label: time.siglaExibicao,
+                  ano: time.anoFundacao,
+                ),
                 const SizedBox(height: 8),
                 Text(
                   time.nome,

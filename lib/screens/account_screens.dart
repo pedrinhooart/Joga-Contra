@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../core/formatters.dart';
 import '../models/anuncio_partida.dart';
 import '../models/notificacao.dart';
 import '../models/partida.dart';
 import '../models/referencia.dart';
 import '../models/usuario.dart';
+import '../services/municipios.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/campo_cidade.dart';
 import '../widgets/carregador.dart';
 import '../widgets/common.dart';
 
@@ -134,7 +135,11 @@ class _AnuncioPainel extends StatelessWidget {
         children: [
           Row(
             children: [
-              Crest(label: ad.time.siglaExibicao, small: true),
+              Crest(
+                imagem: ad.time.urlEscudo,
+                label: ad.time.siglaExibicao,
+                small: true,
+              ),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
@@ -207,10 +212,12 @@ class ProfileScreen extends StatelessWidget {
   const ProfileScreen({
     super.key,
     required this.onEdit,
+    required this.onEditFoto,
+    required this.onEditDescricao,
     required this.onGames,
     required this.onLogout,
   });
-  final VoidCallback onEdit, onGames, onLogout;
+  final VoidCallback onEdit, onEditFoto, onEditDescricao, onGames, onLogout;
 
   @override
   Widget build(BuildContext context) {
@@ -259,8 +266,46 @@ class ProfileScreen extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        Crest(label: time.siglaExibicao, ano: time.anoFundacao),
-                        const SizedBox(width: 11),
+                        // Tocar no escudo troca a foto do time.
+                        Semantics(
+                          button: true,
+                          label: 'Alterar foto do time',
+                          child: GestureDetector(
+                            onTap: onEditFoto,
+                            child: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                Crest(
+                                  imagem: time.urlEscudo,
+                                  label: time.siglaExibicao,
+                                  ano: time.anoFundacao,
+                                ),
+                                Positioned(
+                                  right: -6,
+                                  bottom: -6,
+                                  child: Container(
+                                    width: 26,
+                                    height: 26,
+                                    decoration: BoxDecoration(
+                                      color: AppColors.forest,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: Colors.white,
+                                        width: 2,
+                                      ),
+                                    ),
+                                    child: const Icon(
+                                      Icons.photo_camera_outlined,
+                                      size: 13,
+                                      color: AppColors.lime,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 14),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -284,6 +329,7 @@ class ProfileScreen extends StatelessWidget {
                         ),
                         IconButton(
                           onPressed: onEdit,
+                          tooltip: 'Editar nome do time',
                           icon: const Icon(
                             Icons.edit_outlined,
                             color: AppColors.green,
@@ -291,29 +337,33 @@ class ProfileScreen extends StatelessWidget {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
+                    // Modalidade, categoria, nível e quantidade são de cada
+                    // anúncio, não do time: não aparecem no perfil.
+                    const Divider(height: 28),
+                    Row(
                       children: [
-                        for (final m in time.modalidades)
-                          TagPill(m.nome, green: true),
-                        if (time.categoriaEtaria != null)
-                          TagPill(time.categoriaEtaria!.nome),
-                        if (time.nivelTecnico != null)
-                          TagPill(time.nivelTecnico!.nome),
-                        TagPill('${time.quantidadeJogadores} jogadores'),
+                        const Expanded(
+                          child: Text(
+                            'Sobre o time',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: onEditDescricao,
+                          tooltip: 'Editar descrição',
+                          visualDensity: VisualDensity.compact,
+                          icon: const Icon(
+                            Icons.edit_outlined,
+                            size: 18,
+                            color: AppColors.green,
+                          ),
+                        ),
                       ],
                     ),
-                    const Divider(height: 24),
-                    const Text(
-                      'Sobre o time',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 15,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 2),
                     Text(
                       (time.descricao?.trim().isNotEmpty ?? false)
                           ? time.descricao!
@@ -654,7 +704,11 @@ class _MapScreenState extends State<MapScreen> {
               AnuncioCard(anuncio: atual, onTap: () => widget.onSelect(atual)),
               for (final g in anuncios.where((g) => g.id != atual.id).take(2))
                 ListTile(
-                  leading: Crest(label: g.time.siglaExibicao, small: true),
+                  leading: Crest(
+                    imagem: g.time.urlEscudo,
+                    label: g.time.siglaExibicao,
+                    small: true,
+                  ),
                   title: Text(
                     g.time.nome,
                     style: const TextStyle(
@@ -751,7 +805,10 @@ class ConfirmationScreen extends StatelessWidget {
                       Expanded(
                         child: Column(
                           children: [
-                            Crest(label: meuTime.siglaExibicao),
+                            Crest(
+                              imagem: meuTime.urlEscudo,
+                              label: meuTime.siglaExibicao,
+                            ),
                             Text(
                               meuTime.nome,
                               textAlign: TextAlign.center,
@@ -780,7 +837,10 @@ class ConfirmationScreen extends StatelessWidget {
                       Expanded(
                         child: Column(
                           children: [
-                            Crest(label: adversario.siglaExibicao),
+                            Crest(
+                              imagem: adversario.urlEscudo,
+                              label: adversario.siglaExibicao,
+                            ),
                             Text(
                               adversario.nome,
                               textAlign: TextAlign.center,
@@ -932,7 +992,10 @@ class _ReviewScreenState extends State<ReviewScreen> {
             children: [
               Row(
                 children: [
-                  Crest(label: adversario.siglaExibicao),
+                  Crest(
+                    imagem: adversario.urlEscudo,
+                    label: adversario.siglaExibicao,
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
@@ -1049,13 +1112,10 @@ class AuthScreen extends StatefulWidget {
 class _AuthScreenState extends State<AuthScreen> {
   final form = GlobalKey<FormState>();
   final nome = TextEditingController(),
-      telefone = TextEditingController(),
       email = TextEditingController(),
       senha = TextEditingController(),
       nomeTime = TextEditingController(),
-      jogadores = TextEditingController(),
       cidade = TextEditingController();
-  int? modalidade, categoria, nivel;
   String? estado;
   bool enviando = false;
 
@@ -1063,15 +1123,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
   @override
   void dispose() {
-    for (final c in [
-      nome,
-      telefone,
-      email,
-      senha,
-      nomeTime,
-      jogadores,
-      cidade,
-    ]) {
+    for (final c in [nome, email, senha, nomeTime, cidade]) {
       c.dispose();
     }
     super.dispose();
@@ -1152,15 +1204,6 @@ class _AuthScreenState extends State<AuthScreen> {
               validator: _obrigatorio,
             ),
             const SizedBox(height: 10),
-            TextFormField(
-              controller: telefone,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: 'Telefone',
-                hintText: '(11) 99999-9999',
-              ),
-            ),
-            const SizedBox(height: 10),
           ],
           TextFormField(
             controller: email,
@@ -1238,22 +1281,9 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 
+  /// Só o necessário para a conta. Modalidade, categoria, nível e quantidade
+  /// de jogadores são informados em cada anúncio de partida.
   List<Widget> _camposTime(Referencias refs) {
-    DropdownButtonFormField<int> dropdown(
-      String label,
-      List<ItemReferencia> itens,
-      int? valor,
-      ValueChanged<int?> onChanged, {
-      bool obrigatorio = true,
-    }) => DropdownButtonFormField<int>(
-      initialValue: valor,
-      decoration: InputDecoration(labelText: label),
-      items: itens
-          .map((v) => DropdownMenuItem(value: v.id, child: Text(v.nome)))
-          .toList(),
-      onChanged: (v) => setState(() => onChanged(v)),
-      validator: (v) => obrigatorio && v == null ? 'Selecione uma opção' : null,
-    );
     return [
       const SizedBox(height: 10),
       TextFormField(
@@ -1265,62 +1295,21 @@ class _AuthScreenState extends State<AuthScreen> {
         validator: _obrigatorio,
       ),
       const SizedBox(height: 10),
-      dropdown(
-        'Modalidade',
-        refs.modalidades,
-        modalidade,
-        (v) => modalidade = v,
-      ),
-      const SizedBox(height: 10),
-      dropdown(
-        'Categoria',
-        refs.categoriasEtarias,
-        categoria,
-        (v) => categoria = v,
-      ),
-      const SizedBox(height: 10),
-      dropdown(
-        'Nível do time',
-        refs.niveisTecnicos,
-        nivel,
-        (v) => nivel = v,
-        obrigatorio: false,
-      ),
-      const SizedBox(height: 10),
-      TextFormField(
-        controller: jogadores,
-        keyboardType: TextInputType.number,
-        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-        decoration: const InputDecoration(
-          labelText: 'Quantidade de jogadores',
-          hintText: 'Quantos jogadores o time tem',
-        ),
-        validator: (v) {
-          final n = int.tryParse(v ?? '');
-          return n == null || n < 5 || n > 60
-              ? 'Informe de 5 a 60 jogadores'
-              : null;
-        },
-      ),
-      const SizedBox(height: 10),
-      TextFormField(
-        controller: cidade,
-        decoration: const InputDecoration(
-          labelText: 'Cidade',
-          hintText: 'São Paulo',
-        ),
-        validator: _obrigatorio,
-      ),
-      const SizedBox(height: 10),
       DropdownButtonFormField<String>(
         initialValue: estado,
         decoration: const InputDecoration(labelText: 'Estado'),
         items: refs.estados
             .map((e) => DropdownMenuItem(value: e.sigla, child: Text(e.sigla)))
             .toList(),
-        onChanged: (v) => setState(() => estado = v),
+        onChanged: (v) => setState(() {
+          // Cidade de outro estado nunca fica selecionada por engano.
+          if (v != estado) cidade.clear();
+          estado = v;
+        }),
         validator: (v) => v == null ? 'Selecione o estado' : null,
       ),
+      const SizedBox(height: 10),
+      CampoCidade(controller: cidade, siglaEstado: estado),
     ];
   }
 
@@ -1338,20 +1327,16 @@ class _AuthScreenState extends State<AuthScreen> {
             'Se o e-mail estiver cadastrado, você receberá um link de recuperação.',
           );
         case 'register':
+          // O validador da cidade já exigiu a lista carregada.
+          final municipios = Municipios.carregado!;
           await app.cadastrar(
             CadastroCapitao(
               nome: nome.text.trim(),
               email: email.text.trim().toLowerCase(),
               senha: senha.text,
-              telefone: telefone.text.trim().isEmpty
-                  ? null
-                  : telefone.text.trim(),
               nomeTime: nomeTime.text.trim(),
-              idModalidade: modalidade!,
-              idCategoriaEtaria: categoria!,
-              idNivelTecnico: nivel,
-              quantidadeJogadores: int.parse(jogadores.text),
-              cidade: cidade.text.trim(),
+              // Nome oficial do IBGE, mesmo se digitado sem acento.
+              cidade: municipios.oficial(estado!, cidade.text)!,
               siglaEstado: estado!,
             ),
           );

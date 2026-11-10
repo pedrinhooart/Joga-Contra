@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { env } from './config/env.js';
 import { errorHandler, notFound } from './middlewares/error-handler.js';
 import { anunciosRouter } from './routes/anuncios.js';
+import { armazenamento } from './services/armazenamento.js';
 import { authRouter } from './routes/auth.js';
 import { healthRouter } from './routes/health.js';
 import { notificacoesRouter } from './routes/notificacoes.js';
@@ -47,6 +48,12 @@ export function createApp() {
     app.use('/api/auth/recuperar-senha', limitar(5));
     app.use('/api/auth/redefinir-senha', limitar(5));
   }
+
+  // Imagens enviadas (escudos). Nomes únicos por envio: podem ficar em cache.
+  app.use(
+    '/api/arquivos',
+    express.static(armazenamento.raiz, { index: false, dotfiles: 'deny', maxAge: '30d', immutable: true }),
+  );
 
   app.use('/api/health', healthRouter);
   app.use('/api/auth', authRouter);

@@ -1,13 +1,17 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:joga_contra/models/anuncio_partida.dart';
 import 'package:joga_contra/models/notificacao.dart';
 import 'package:joga_contra/models/partida.dart';
 import 'package:joga_contra/models/solicitacao_confronto.dart';
+import 'package:joga_contra/models/time.dart';
 import 'package:joga_contra/models/usuario.dart';
 import 'package:joga_contra/repositories/api/api_repositories.dart';
 import 'package:joga_contra/repositories/contratos.dart';
 import 'package:joga_contra/services/api_client.dart';
 import 'package:joga_contra/services/armazenamento_sessao.dart';
+import 'package:joga_contra/services/selecao_imagem.dart';
 
 /// Repositórios reais do app contra a API rodando: prova que os modelos Dart
 /// leem o JSON de verdade. Grava dados fictícios, por isso só roda com
@@ -29,19 +33,13 @@ Future<_Capitao> _cadastrar(String nomeTime) async {
     ApiClient(baseUrl: _url),
     armazenamento: armazenamento,
   );
-  final refs = await repos.referencias.carregar();
   final sessao = await repos.auth.cadastrar(
     CadastroCapitao(
       nome: 'Capitão $nomeTime',
       email:
           'teste.homologacao.flutter.${DateTime.now().microsecondsSinceEpoch}.${nomeTime.hashCode.abs()}@example.com',
       senha: 'senha-de-teste-123',
-      telefone: '(11) 90000-0000',
       nomeTime: nomeTime,
-      idModalidade: refs.modalidades.first.id,
-      idCategoriaEtaria: refs.categoriasEtarias.last.id,
-      idNivelTecnico: refs.niveisTecnicos[1].id,
-      quantidadeJogadores: 14,
       cidade: 'São Paulo',
       siglaEstado: 'SP',
     ),
@@ -97,8 +95,12 @@ void main() {
     test('sessão é salva, restaurada e encerrada', () async {
       final c = await _cadastrar('Sessão');
       expect(c.armazenamento.token, isNotNull);
-      expect(c.sessao.time.quantidadeJogadores, 14);
-      expect(c.sessao.time.modalidades.single.codigo, 'society');
+      expect(c.sessao.time.quantidadeJogadores, isNull);
+      expect(c.sessao.time.categoriaEtaria, isNull);
+      // Modalidade, nível e telefone não são pedidos no cadastro.
+      expect(c.sessao.time.modalidades, isEmpty);
+      expect(c.sessao.time.nivelTecnico, isNull);
+      expect(c.sessao.usuario.telefone, isNull);
 
       // Simula reabrir o app com o token salvo.
       final reaberto = criarRepositoriosApi(
@@ -112,6 +114,44 @@ void main() {
       await reaberto.auth.sair();
       expect(c.armazenamento.token, isNull);
       expect(await reaberto.auth.sessaoAtual(), isNull);
+    });
+
+    test('foto e descrição persistem e aparecem para outro time', () async {
+      final dono = await _cadastrar('Foto Flutter');
+      final outro = await _cadastrar('Outro Flutter');
+      final png = base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      );
+
+      final comFoto = await dono.repos.times.enviarEscudo(
+        dono.idTime,
+        SelecaoDeImagem.validar(png),
+      );
+      final endereco = comFoto.urlEscudo!;
+      expect(endereco, startsWith('/api/arquivos/escudos/'));
+      final arquivo = await http.get(Uri.parse(_url).resolve(endereco));
+      expect(arquivo.statusCode, 200);
+      expect(arquivo.bodyBytes, png);
+
+      const texto = 'Time do bairro, jogo limpo.';
+      await dono.repos.times.atualizar(
+        dono.idTime,
+        const AtualizacaoTime(descricao: texto),
+      );
+
+      // Reabrir o app com o token salvo traz foto e descrição do servidor.
+      final reaberto = criarRepositoriosApi(
+        ApiClient(baseUrl: _url),
+        armazenamento: dono.armazenamento,
+      );
+      final sessao = (await reaberto.auth.sessaoAtual())!;
+      expect(sessao.time.urlEscudo, endereco);
+      expect(sessao.time.descricao, texto);
+
+      // Outro capitão, em outra sessão, vê o mesmo.
+      final visto = await outro.repos.times.buscar(dono.idTime);
+      expect(visto.urlEscudo, endereco);
+      expect(visto.descricao, texto);
     });
 
     test('token inválido salvo é descartado', () async {

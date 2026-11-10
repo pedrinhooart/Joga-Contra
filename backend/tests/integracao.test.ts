@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { PNG_1X1 } from './dados-teste.js';
 
 // Não há provedor de e-mail: o teste captura o código no ponto de envio.
 const codigosEnviados = vi.hoisted(() => [] as string[]);
@@ -15,6 +19,9 @@ vi.mock('../src/services/email.js', () => ({
  * isso só roda com TESTE_INTEGRACAO=1 e, no servidor padrão (3306), também com
  * TESTE_BANCO_REAL_AUTORIZADO=1 e ROTINAS_PRESERVAR_ATE. Os registros criados permanecem no banco.
  */
+// Imagens enviadas nos testes não vão para a pasta real de arquivos.
+process.env.ARQUIVOS_DIR = mkdtempSync(path.join(tmpdir(), 'joga-arquivos-teste-'));
+
 const ativo = process.env.TESTE_INTEGRACAO === '1';
 if (ativo && (process.env.DB_PORT ?? '3306') === '3306' && process.env.TESTE_BANCO_REAL_AUTORIZADO !== '1') {
   throw new Error('Testes de integração bloqueados no servidor padrão: defina TESTE_BANCO_REAL_AUTORIZADO=1 para rodar nele.');
@@ -161,6 +168,77 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
     expect(eu.body.data.usuario.email).toBe(email);
     expect(eu.body.data.time.nome).toBe('Time Login');
     expect(eu.body.data.time.nomeCapitao).toBe('Capitão');
+  });
+
+  it('cadastro sem telefone, modalidade, categoria, nível e quantidade: o jogo define esses dados', async () => {
+    const r = await api().post('/auth/cadastro').send({
+      usuario: { nome: 'Capitão Mínimo', email: `teste.homologacao.${randomUUID()}@example.com`, senha: SENHA },
+      time: { nome: 'Mínimo FC', cidade: 'Campinas', siglaEstado: 'SP' },
+    });
+    expect(r.status).toBe(201);
+    expect(r.body.data.usuario.telefone).toBeNull();
+    expect(r.body.data.time).toMatchObject({
+      modalidades: [], categoriaEtaria: null, nivelTecnico: null, quantidadeJogadores: null, telefoneContato: null,
+    });
+    const perfil = await api(r.body.data as Capitao).get(`/times/${r.body.data.time.idTime}`);
+    expect(perfil.status).toBe(200); // continua visível no perfil público
+    const c = { token: r.body.data.token } as Capitao;
+    const anuncio = await publicar(c, { idModalidade: QUADRA, idCategoriaEtaria: SUB_17, idNivelTecnico: INTERMEDIARIO });
+    expect(anuncio).toMatchObject({
+      modalidade: { id: QUADRA }, categoriaEtaria: { id: SUB_17 }, nivelTecnico: { id: INTERMEDIARIO }, quantidadeJogadores: 7,
+    });
+  });
+
+  it('foto do time: envio, validação, troca e visibilidade para outros times', async () => {
+    const dono = await novoCapitao('Foto');
+    const outro = await novoCapitao('Visitante Foto');
+    const enviar = (c: Capitao | undefined, tipo: string, corpo: Buffer, alvo = dono.idTime) =>
+      api(c).put(`/times/${alvo}/escudo`).set('Content-Type', tipo).send(corpo);
+
+    expect((await enviar(undefined, 'image/png', PNG_1X1)).status).toBe(401);
+    expect((await enviar(outro, 'image/png', PNG_1X1)).status).toBe(403);
+    expect((await enviar(dono, 'text/plain', Buffer.from('oi'))).status).toBe(415);
+    expect((await enviar(dono, 'image/png', Buffer.from('não é imagem'))).status).toBe(400);
+    const grande = Buffer.concat([PNG_1X1, Buffer.alloc(2 * 1024 * 1024)]);
+    const recusada = await enviar(dono, 'image/png', grande);
+    expect(recusada.status).toBe(413);
+    expect(recusada.body.error.code).toBe('PAYLOAD_TOO_LARGE');
+    // Nenhuma falha trocou a foto (ainda sem foto).
+    expect((await api(dono).get(`/times/${dono.idTime}`)).body.data.urlEscudo).toBeNull();
+
+    const primeira = await enviar(dono, 'image/png', PNG_1X1);
+    expect(primeira.status).toBe(200);
+    const url1: string = primeira.body.data.urlEscudo;
+    expect(url1).toMatch(new RegExp(`^/api/arquivos/escudos/${dono.idTime}-[0-9a-f-]{36}\.png$`));
+    const arquivo = await request(app).get(url1);
+    expect(arquivo.status).toBe(200);
+    expect(arquivo.headers['content-type']).toBe('image/png');
+    expect(Buffer.from(arquivo.body)).toEqual(PNG_1X1);
+
+    // Outro capitão, em outra sessão, vê a mesma foto.
+    expect((await api(outro).get(`/times/${dono.idTime}`)).body.data.urlEscudo).toBe(url1);
+
+    // Trocar a foto apaga o arquivo antigo.
+    const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(64)]);
+    const url2: string = (await enviar(dono, 'image/jpeg', jpeg)).body.data.urlEscudo;
+    expect(url2).toMatch(/\.jpg$/);
+    expect((await request(app).get(url1)).status).toBe(404);
+    expect((await request(app).get(url2)).status).toBe(200);
+    expect((await api(dono).get('/auth/eu')).body.data.time.urlEscudo).toBe(url2); // reabrir o app
+  });
+
+  it('descrição do time: salvar, ver em outra sessão e remover', async () => {
+    const dono = await novoCapitao('Descrição');
+    const outro = await novoCapitao('Leitor Descrição');
+    const texto = 'Time de amigos desde 2010. Jogamos limpo e chegamos no horário.';
+    const salvo = await api(dono).patch(`/times/${dono.idTime}`).send({ descricao: `  ${texto}  ` });
+    expect(salvo.body.data.descricao).toBe(texto);
+    expect((await api(outro).get(`/times/${dono.idTime}`)).body.data.descricao).toBe(texto);
+    expect((await api(dono).get('/auth/eu')).body.data.time.descricao).toBe(texto);
+    expect((await api(dono).patch(`/times/${dono.idTime}`).send({ descricao: 'x'.repeat(2001) })).status).toBe(400);
+    expect((await api(outro).patch(`/times/${dono.idTime}`).send({ descricao: 'invasão' })).status).toBe(403);
+    const vazia = await api(dono).patch(`/times/${dono.idTime}`).send({ descricao: '   ' });
+    expect(vazia.body.data.descricao).toBeNull();
   });
 
   it('cadastro com time inválido não deixa usuário órfão (transação)', async () => {

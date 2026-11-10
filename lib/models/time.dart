@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import '../core/formatters.dart';
 import 'referencia.dart';
 
@@ -45,7 +46,7 @@ class Time {
     required this.cidade,
     required this.siglaEstado,
     this.bairro,
-    required this.quantidadeJogadores,
+    this.quantidadeJogadores,
     this.modalidades = const [],
     this.categoriaEtaria,
     this.nivelTecnico,
@@ -63,7 +64,9 @@ class Time {
   final String? sigla, urlEscudo;
   final String cidade, siglaEstado;
   final String? bairro;
-  final int quantidadeJogadores;
+
+  /// Opcional: o cadastro não pede; cada anúncio informa a do jogo.
+  final int? quantidadeJogadores;
   final List<ItemReferencia> modalidades;
   final ItemReferencia? categoriaEtaria, nivelTecnico;
   final String? descricao;
@@ -89,12 +92,13 @@ class Time {
     nomeCapitao: nomeCapitao,
   );
 
-  Time copyWith({String? nome}) => Time(
+  /// [descricao] vazia remove a descrição.
+  Time copyWith({String? nome, String? descricao, String? urlEscudo}) => Time(
     id: id,
     idCapitao: idCapitao,
     nome: nome ?? this.nome,
     sigla: nome == null ? sigla : null,
-    urlEscudo: urlEscudo,
+    urlEscudo: urlEscudo ?? this.urlEscudo,
     cidade: cidade,
     siglaEstado: siglaEstado,
     bairro: bairro,
@@ -102,7 +106,9 @@ class Time {
     modalidades: modalidades,
     categoriaEtaria: categoriaEtaria,
     nivelTecnico: nivelTecnico,
-    descricao: descricao,
+    descricao: descricao == null
+        ? this.descricao
+        : (descricao.trim().isEmpty ? null : descricao.trim()),
     anoFundacao: anoFundacao,
     nomeCapitao: nomeCapitao,
     telefoneContato: telefoneContato,
@@ -121,7 +127,7 @@ class Time {
     cidade: json['cidade'] as String,
     siglaEstado: json['siglaEstado'] as String,
     bairro: json['bairro'] as String?,
-    quantidadeJogadores: (json['quantidadeJogadores'] as num).toInt(),
+    quantidadeJogadores: (json['quantidadeJogadores'] as num?)?.toInt(),
     modalidades: ((json['modalidades'] as List?) ?? const [])
         .map((e) => ItemReferencia.fromJson(e as Map<String, dynamic>))
         .toList(),
@@ -167,4 +173,35 @@ class AtualizacaoTime {
     'siglaEstado': ?siglaEstado,
     'telefoneContato': ?telefoneContato,
   };
+}
+
+/// Imagem escolhida para o escudo, já validada no aparelho.
+class ImagemSelecionada {
+  const ImagemSelecionada(this.bytes, this.tipo);
+
+  final Uint8List bytes;
+
+  /// `image/jpeg`, `image/png` ou `image/webp`.
+  final String tipo;
+
+  /// Mesmo limite da API.
+  static const limiteBytes = 2 * 1024 * 1024;
+
+  /// Formato real pelos primeiros bytes; nulo se não for JPEG, PNG ou WebP.
+  static String? tipoDe(Uint8List b) {
+    bool comeca(List<int> assinatura, [int inicio = 0]) =>
+        b.length >= inicio + assinatura.length &&
+        [
+          for (var i = 0; i < assinatura.length; i++)
+            b[inicio + i] == assinatura[i],
+        ].every((igual) => igual);
+    if (comeca([0xFF, 0xD8, 0xFF])) return 'image/jpeg';
+    if (comeca([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])) {
+      return 'image/png';
+    }
+    if (comeca('RIFF'.codeUnits) && comeca('WEBP'.codeUnits, 8)) {
+      return 'image/webp';
+    }
+    return null;
+  }
 }

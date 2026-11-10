@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../config/api_config.dart';
 import '../core/formatters.dart';
 import '../models/anuncio_partida.dart';
 import '../theme/app_theme.dart';
@@ -6,29 +7,28 @@ import '../theme/app_theme.dart';
 class BrandMark extends StatelessWidget {
   const BrandMark({super.key, this.compact = false});
   final bool compact;
+
+  /// Logo oficial do Joga Contra (512 × 505, fundo transparente).
+  static const logo = 'assets/imagens/logo_joga_contra.png';
+
   @override
   Widget build(BuildContext context) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
-      Container(
-        width: compact ? 36 : 42,
-        height: compact ? 39 : 45,
-        decoration: BoxDecoration(
-          color: AppColors.lime,
-          borderRadius: BorderRadius.circular(13),
-        ),
-        child: const Icon(
-          Icons.sports_soccer,
-          color: AppColors.forest,
-          size: 26,
-        ),
+      Image.asset(
+        logo,
+        height: compact ? 40 : 58,
+        fit: BoxFit.contain, // mantém a proporção original
+        filterQuality: FilterQuality.medium,
+        semanticLabel: 'Logo do Joga Contra',
       ),
-      const SizedBox(width: 9),
+      const SizedBox(width: 10),
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          RichText(
-            text: const TextSpan(
+          // Text.rich (e não RichText) segue a fonte do tema e a escala de leitura.
+          const Text.rich(
+            TextSpan(
               style: TextStyle(
                 fontSize: 23,
                 fontWeight: FontWeight.w800,
@@ -105,8 +105,8 @@ class PitchLinesPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-/// Escudo do time. Sem imagem enviada, mostra a sigla do time.
-/// Pendente: exibir `urlEscudo` quando o upload de imagens existir.
+/// Escudo do time: a foto enviada pelo capitão ou, sem ela (ou enquanto
+/// carrega, ou se falhar), a sigla do time.
 class Crest extends StatelessWidget {
   const Crest({
     super.key,
@@ -114,40 +114,74 @@ class Crest extends StatelessWidget {
     this.small = false,
     this.ano,
     this.icon = Icons.sports_soccer,
+    this.imagem,
   });
   final String label;
   final bool small;
   final int? ano;
   final IconData icon;
+
+  /// `urlEscudo` do time, como veio da API.
+  final String? imagem;
+
+  static final _emMemoria = <String, MemoryImage>{};
+
+  /// Imagem do escudo a partir do endereço da API (ou `data:` na demonstração).
+  static ImageProvider? provedor(String? endereco) {
+    if (endereco == null || endereco.isEmpty) return null;
+    if (endereco.startsWith('data:')) {
+      return _emMemoria.putIfAbsent(
+        endereco,
+        () => MemoryImage(UriData.parse(endereco).contentAsBytes()),
+      );
+    }
+    return NetworkImage(ApiConfig.urlArquivo(endereco)!);
+  }
+
   @override
-  Widget build(BuildContext context) => Container(
-    width: small ? 40 : 60,
-    height: small ? 44 : 66,
-    decoration: BoxDecoration(
-      color: const Color(0xFFEAF2E8),
-      border: Border.all(color: const Color(0xFFD5E1D4)),
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Text(
-          label,
-          maxLines: 1,
-          style: TextStyle(
-            fontWeight: FontWeight.w800,
-            color: AppColors.forest,
-            fontSize: small ? 9 : 11,
-          ),
+  Widget build(BuildContext context) {
+    final foto = provedor(imagem);
+    return Container(
+      width: small ? 40 : 60,
+      height: small ? 44 : 66,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: const Color(0xFFEAF2E8),
+        border: Border.all(color: const Color(0xFFD5E1D4)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: foto == null
+          ? _sigla()
+          : Image(
+              image: foto,
+              fit: BoxFit.cover,
+              semanticLabel: 'Escudo do time $label',
+              frameBuilder: (context, filho, quadro, sincrono) =>
+                  quadro == null && !sincrono ? _sigla() : filho,
+              errorBuilder: (context, erro, pilha) => _sigla(),
+            ),
+    );
+  }
+
+  Widget _sigla() => Column(
+    mainAxisAlignment: MainAxisAlignment.center,
+    children: [
+      Text(
+        label,
+        maxLines: 1,
+        style: TextStyle(
+          fontWeight: FontWeight.w800,
+          color: AppColors.forest,
+          fontSize: small ? 9 : 11,
         ),
-        Icon(icon, color: AppColors.green, size: small ? 14 : 20),
-        if (!small && ano != null)
-          Text(
-            '$ano',
-            style: const TextStyle(fontSize: 7, color: AppColors.muted),
-          ),
-      ],
-    ),
+      ),
+      Icon(icon, color: AppColors.green, size: small ? 14 : 20),
+      if (!small && ano != null)
+        Text(
+          '$ano',
+          style: const TextStyle(fontSize: 7, color: AppColors.muted),
+        ),
+    ],
   );
 }
 
@@ -294,7 +328,10 @@ class AnuncioCard extends StatelessWidget {
       children: [
         Row(
           children: [
-            Crest(label: anuncio.time.siglaExibicao),
+            Crest(
+              imagem: anuncio.time.urlEscudo,
+              label: anuncio.time.siglaExibicao,
+            ),
             const SizedBox(width: 11),
             Expanded(
               child: Column(

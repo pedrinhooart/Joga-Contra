@@ -33,6 +33,9 @@ abstract interface class ReferenciaRepository {
 abstract interface class TimeRepository {
   Future<Time> buscar(String idTime);
   Future<Time> atualizar(String idTime, AtualizacaoTime dados);
+
+  /// Troca a foto (escudo) do time; a anterior só sai se o envio der certo.
+  Future<Time> enviarEscudo(String idTime, ImagemSelecionada imagem);
 }
 
 abstract interface class AnuncioRepository {

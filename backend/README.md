@@ -14,7 +14,7 @@ npm run dev
 
 Produção: `npm run build` e `npm start`. No emulador Android use `http://10.0.2.2:3000/api`; em aparelho físico, o IP da máquina em `API_BASE_URL`.
 
-O `.env` é ignorado pelo Git. Variáveis: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `PORT`, `HOST`, `CORS_ORIGIN`, `HORAS_PARTIDA_REALIZADA`, `ROTINAS_PRESERVAR_ATE`. Em produção use o usuário de privilégio mínimo da seção 10 de `database_v2/README.md`, não `root`.
+O `.env` é ignorado pelo Git. Variáveis: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `PORT`, `HOST`, `CORS_ORIGIN`, `HORAS_PARTIDA_REALIZADA`, `ROTINAS_PRESERVAR_ATE`, `ARQUIVOS_DIR` (pasta das imagens enviadas; padrão `arquivos`, fora do Git). As imagens ficam no disco do servidor por trás da interface `Armazenamento` (`services/armazenamento.ts`); na AWS, troque pela implementação com S3 sem mudar as rotas. O banco guarda só o endereço. Em produção use o usuário de privilégio mínimo da seção 10 de `database_v2/README.md`, não `root`.
 
 ## Convenções
 
@@ -30,12 +30,14 @@ O `.env` é ignorado pelo Git. Variáveis: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_
 |---|---|---|
 | GET `/health`, `/health/db` | público | Saúde; `/db` confirma a conexão e se o banco é `joga_contra_v2` (503 se não for) |
 | GET `/referencias` | público | Modalidades, categorias etárias, níveis, mandos, critérios, estados |
-| POST `/auth/cadastro` | público | Capitão + time + modalidades em uma transação |
+| POST `/auth/cadastro` | público | Capitão + time em uma transação. Obrigatórios: nome, e-mail, senha, nome do time, cidade e UF. Telefone, modalidades, categoria, nível e quantidade são opcionais: o anúncio informa os de cada jogo |
 | POST `/auth/login` | público | Devolve `{ token, usuario, time }` |
 | GET `/auth/eu` | JWT | Sessão atual |
 | POST `/auth/recuperar-senha`, `/auth/redefinir-senha` | público | Código de uso único. **Envio de e-mail não configurado** |
 | GET `/times/:id`, `/times/:id/avaliacoes` | JWT | Perfil público e avaliações. Contato só para o próprio capitão |
-| PATCH `/times/:id` | capitão | Edita o time e a quantidade de jogadores |
+| PATCH `/times/:id` | capitão | Edita o time (nome, descrição etc.). Descrição em branco remove a descrição |
+| PUT `/times/:id/escudo` | capitão | Foto do time: corpo binário `image/jpeg`, `image/png` ou `image/webp`, até 2 MB (formato conferido pelos bytes). Devolve o time com `urlEscudo` |
+| GET `/arquivos/...` | público | Imagens enviadas (endereço vem em `urlEscudo`) |
 | GET `/anuncios` | JWT | Busca: `texto`, `cidade`, `siglaEstado`, `idModalidade`, `idCategoriaEtaria`, `idNivelTecnico`, `data`, `horario`, `fusoMinutos`, `pagina`, `limite` |
 | GET `/anuncios/meus`, `/anuncios/:id` | JWT | |
 | POST `/anuncios` | capitão | Publica pelo próprio time |
