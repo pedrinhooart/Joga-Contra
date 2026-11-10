@@ -92,7 +92,8 @@ anunciosRouter.get('/:idAnuncio/solicitacoes', async (req, res) => {
 
 const valoresAnuncio = (a: ReturnType<typeof anuncioSchema.parse>) => [
   a.idModalidade, a.idCategoriaEtaria, a.idNivelTecnico, a.idMandoCampo, a.quantidadeJogadores,
-  dataSql(a.dataHoraInicio), a.cidade, a.siglaEstado, a.bairro, a.nomeLocal, a.endereco,
+  dataSql(a.dataHoraInicio), a.duracaoMinutos, a.cidade, a.siglaEstado, a.bairro, a.nomeLocal, a.endereco,
+  a.latitude, a.longitude,
   a.valorAluguelPorTime, a.descricao,
 ];
 
@@ -103,9 +104,10 @@ anunciosRouter.post('/', async (req, res) => {
   await pool.execute(
     `INSERT INTO anuncios_partidas (
        id_anuncio, id_time, id_modalidade, id_categoria_etaria, id_nivel_tecnico, id_mando_campo,
-       quantidade_jogadores, data_hora_inicio, cidade, sigla_estado, bairro, nome_local, endereco,
+       quantidade_jogadores, data_hora_inicio, duracao_minutos, cidade, sigla_estado, bairro, nome_local,
+       endereco, latitude, longitude,
        valor_aluguel_por_time, descricao)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [idAnuncio, meuTime(req), ...valoresAnuncio(dados)],
   );
   res.status(201).json({ data: mapearAnuncio(await obterAnuncio(pool, idAnuncio)) });
@@ -118,8 +120,9 @@ anunciosRouter.put('/:idAnuncio', async (req, res) => {
   await pool.execute(
     `UPDATE anuncios_partidas
         SET id_modalidade = ?, id_categoria_etaria = ?, id_nivel_tecnico = ?, id_mando_campo = ?,
-            quantidade_jogadores = ?, data_hora_inicio = ?, cidade = ?, sigla_estado = ?, bairro = ?,
-            nome_local = ?, endereco = ?, valor_aluguel_por_time = ?, descricao = ?
+            quantidade_jogadores = ?, data_hora_inicio = ?, duracao_minutos = ?, cidade = ?, sigla_estado = ?,
+            bairro = ?,
+            nome_local = ?, endereco = ?, latitude = ?, longitude = ?, valor_aluguel_por_time = ?, descricao = ?
       WHERE id_anuncio = ?`,
     [...valoresAnuncio(dados), idAnuncio],
   );

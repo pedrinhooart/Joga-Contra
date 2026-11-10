@@ -29,6 +29,7 @@ Banco novo, em português, criado a partir de [docs/AUDITORIA_DADOS_DINAMICOS.md
 | 5 | [05_validacao.sql](05_validacao.sql) | Somente `SELECT`/`EXPLAIN`: confere a estrutura e traz consultas de exemplo | Sim |
 | 6 | [06_testes_regras.sql](06_testes_regras.sql) | 59 testes automáticos das regras. **Somente em banco de teste** | Sim (limpa o que cria) |
 | 7 | [07_cadastro_simplificado.sql](07_cadastro_simplificado.sql) | Migração: categoria e quantidade de jogadores do time ficam opcionais (`vis_perfis_times` com `LEFT JOIN`). **Só para bancos criados antes**: 01 e 04 já trazem o resultado. Aplicada no `joga_contra_v2` em 10/11/2026 | Sim (idempotente) |
+| 8 | [08_anuncio_simplificado.sql](08_anuncio_simplificado.sql) | Migração: anúncio sem categoria e quantidade obrigatórias, coluna `duracao_minutos`, busca com `LEFT JOIN` e chat só após o aceite (gatilho de mensagens). **Só para bancos criados antes**: 01, 02 e 04 já trazem o resultado. Aplicada no `joga_contra_v2` em 10/11/2026 | Não (ADD COLUMN) |
 
 Nenhum script contém `DROP DATABASE` ou `DROP TABLE`. O 06 remove apenas os registros e os procedimentos auxiliares `teste_*` que ele mesmo criou.
 

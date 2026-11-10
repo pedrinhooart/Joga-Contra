@@ -58,7 +58,7 @@ SELECT a.id_anuncio, a.id_time, t.nome AS nome_time, t.sigla AS sigla_time, t.ur
        n.ordem AS ordem_nivel_tecnico,
        a.id_mando_campo, mc.codigo AS codigo_mando_campo, mc.nome AS nome_mando_campo,
        mc.ordem AS ordem_mando_campo,
-       a.quantidade_jogadores, a.data_hora_inicio, a.cidade, a.sigla_estado, a.bairro, a.nome_local,
+       a.quantidade_jogadores, a.data_hora_inicio, a.duracao_minutos, a.cidade, a.sigla_estado, a.bairro, a.nome_local,
        a.endereco, a.latitude, a.longitude, a.valor_aluguel_por_time, a.descricao, a.status,
        (SELECT COUNT(*) FROM solicitacoes_confronto s
          WHERE s.id_anuncio = a.id_anuncio AND s.status = 'pendente') AS total_solicitacoes,
@@ -67,7 +67,7 @@ SELECT a.id_anuncio, a.id_time, t.nome AS nome_time, t.sigla AS sigla_time, t.ur
   JOIN times t ON t.id_time = a.id_time
   JOIN usuarios u ON u.id_usuario = t.id_capitao
   JOIN modalidades m ON m.id_modalidade = a.id_modalidade
-  JOIN categorias_etarias c ON c.id_categoria_etaria = a.id_categoria_etaria
+  LEFT JOIN categorias_etarias c ON c.id_categoria_etaria = a.id_categoria_etaria
   JOIN niveis_tecnicos n ON n.id_nivel_tecnico = a.id_nivel_tecnico
   LEFT JOIN mandos_campo mc ON mc.id_mando_campo = a.id_mando_campo
  WHERE a.status = 'ativo'

@@ -8,6 +8,7 @@ import { anunciosRouter } from './routes/anuncios.js';
 import { armazenamento } from './services/armazenamento.js';
 import { authRouter } from './routes/auth.js';
 import { healthRouter } from './routes/health.js';
+import { locaisRouter } from './routes/locais.js';
 import { notificacoesRouter } from './routes/notificacoes.js';
 import { partidasRouter } from './routes/partidas.js';
 import { referenciasRouter } from './routes/referencias.js';
@@ -63,6 +64,7 @@ export function createApp() {
   app.use('/api/solicitacoes', solicitacoesRouter);
   app.use('/api/partidas', partidasRouter);
   app.use('/api/notificacoes', notificacoesRouter);
+  app.use('/api/locais', locaisRouter);
 
   app.use(notFound);
   app.use(errorHandler);

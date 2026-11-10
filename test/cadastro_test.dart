@@ -204,10 +204,11 @@ void main() {
       expect(find.textContaining('Campinas, SP'), findsOneWidget);
       expect(find.textContaining('jogadores'), findsNothing);
 
-      // Anúncio: modalidade, categoria e nível continuam lá, sem nada marcado.
+      // Anúncio: modalidade e nível continuam, sem nada marcado; categoria,
+      // quantidade, mando e bairro saíram do formulário.
       await tester.tap(find.text('Anunciar').last);
       await tester.pumpAndSettle();
-      for (final campo in ['Modalidade', 'Categoria', 'Nível do time']) {
+      for (final campo in ['Modalidade', 'Nível do time']) {
         final dropdown = find.widgetWithText(
           DropdownButtonFormField<int>,
           campo,
@@ -219,10 +220,14 @@ void main() {
           reason: campo,
         );
       }
-      expect(
-        find.widgetWithText(TextFormField, 'Quantidade de jogadores'),
-        findsOneWidget,
-      );
+      for (final removido in [
+        'Categoria',
+        'Quantidade de jogadores',
+        'Mando de campo',
+        'Bairro / região',
+      ]) {
+        expect(find.text(removido), findsNothing, reason: removido);
+      }
       await tester.tap(find.text('Nível do time'));
       await tester.pumpAndSettle();
       for (final nivel in ['Iniciante', 'Intermediário', 'Avançado']) {

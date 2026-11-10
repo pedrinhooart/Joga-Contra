@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../core/formatters.dart';
 import '../models/anuncio_partida.dart';
+import '../models/local_esportivo.dart';
 import '../models/partida.dart';
 import '../models/referencia.dart';
 import '../models/solicitacao_confronto.dart';
 import '../models/time.dart';
+import '../services/municipios.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/campo_cidade.dart';
+import '../widgets/campo_local.dart';
 import '../widgets/carregador.dart';
 import '../widgets/common.dart';
 
@@ -22,17 +25,22 @@ class CreateGameScreen extends StatefulWidget {
 class _CreateGameScreenState extends State<CreateGameScreen> {
   final form = GlobalKey<FormState>();
   late final AnuncioPartida? e = widget.editando;
+
+  // Data e horário são escolhidos no calendário e no relógio; os campos só
+  // mostram o resultado (DD/MM/AAAA e HH:mm).
+  late DateTime? dia = e == null
+      ? null
+      : DateUtils.dateOnly(e!.dataHoraInicio.toLocal());
+  late TimeOfDay? horario = e == null
+      ? null
+      : TimeOfDay.fromDateTime(e!.dataHoraInicio.toLocal());
   late final data = TextEditingController(
-    text: e == null ? '' : Formatos.dataNumerica(e!.dataHoraInicio),
+    text: dia == null ? '' : Formatos.dataNumerica(dia!),
   );
   late final hora = TextEditingController(
     text: e == null ? '' : Formatos.hora(e!.dataHoraInicio),
   );
-  late final jogadores = TextEditingController(
-    text: e?.quantidadeJogadores.toString() ?? '',
-  );
   late final cidade = TextEditingController(text: e?.cidade ?? '');
-  late final bairro = TextEditingController(text: e?.bairro ?? '');
   late final local = TextEditingController(text: e?.nomeLocal ?? '');
   late final taxa = TextEditingController(
     text: e?.valorAluguelPorTime == null
@@ -40,47 +48,180 @@ class _CreateGameScreenState extends State<CreateGameScreen> {
         : Formatos.decimal(e!.valorAluguelPorTime!, casas: 2),
   );
   late final observacoes = TextEditingController(text: e?.descricao ?? '');
-  int? modalidade, categoria, nivel, mando;
+  int? modalidade, nivel, duracao;
   String? siglaEstado;
+
+  /// Endereço e coordenadas do local escolhido nas sugestões.
+  late String? endereco = e?.endereco;
+  late double? latitude = e?.latitude, longitude = e?.longitude;
   bool salvando = false;
   bool _iniciado = false;
+
+  static const _duracoes = [30, 60, 90, 120, 150, 180];
+  static const _outraDuracao = -1;
+  int _versaoDuracao = 0;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_iniciado) return;
     _iniciado = true;
-    final app = AppScope.of(context);
-    final refs = app.referencias, time = app.time!;
+    final time = AppScope.of(context).time!;
     // O cadastro não pede esses dados: sem eles no time, o capitão escolhe
     // os do jogo (nada pré-marcado por engano). Times antigos mantêm o padrão.
     modalidade = e?.modalidade.id ?? time.modalidades.firstOrNull?.id;
-    categoria = e?.categoriaEtaria.id ?? time.categoriaEtaria?.id;
     nivel = e?.nivelTecnico?.id ?? time.nivelTecnico?.id;
-    mando = e?.mandoCampo?.id ?? refs.mandosCampo.firstOrNull?.id;
+    duracao = e?.duracaoMinutos;
     siglaEstado = e?.siglaEstado ?? time.siglaEstado;
     if (cidade.text.isEmpty) cidade.text = time.cidade;
+    cidade.addListener(_cidadeMudou);
   }
 
   @override
   void dispose() {
-    for (final c in [
-      data,
-      hora,
-      jogadores,
-      cidade,
-      bairro,
-      local,
-      taxa,
-      observacoes,
-    ]) {
+    for (final c in [data, hora, cidade, local, taxa, observacoes]) {
       c.dispose();
     }
     super.dispose();
   }
 
-  String? _obrigatorio(String? v) =>
-      (v == null || v.trim().isEmpty) ? 'Campo obrigatório' : null;
+  /// Nome oficial da cidade digitada/escolhida, ou nulo se ainda não é válida.
+  String? get _cidadeOficial => siglaEstado == null
+      ? null
+      : Municipios.carregado?.oficial(siglaEstado!, cidade.text);
+
+  String? _ultimaCidade;
+  void _cidadeMudou() {
+    final atual = _cidadeOficial;
+    if (atual == _ultimaCidade) return;
+    _ultimaCidade = atual;
+    setState(() {}); // atualiza as sugestões de locais
+  }
+
+  void _localEscolhido(LocalEsportivo? l) {
+    endereco = l?.endereco;
+    latitude = l?.latitude;
+    longitude = l?.longitude;
+  }
+
+  DateTime? get _inicio => dia == null || horario == null
+      ? null
+      : DateTime(
+          dia!.year,
+          dia!.month,
+          dia!.day,
+          horario!.hour,
+          horario!.minute,
+        );
+
+  Future<void> _escolherData() async {
+    final hoje = DateUtils.dateOnly(DateTime.now());
+    final escolhido = await showDatePicker(
+      context: context,
+      initialDate: dia != null && !dia!.isBefore(hoje) ? dia! : hoje,
+      firstDate: hoje, // nada antes de hoje
+      lastDate: DateTime(hoje.year + 1, hoje.month, hoje.day),
+      helpText: 'Data da partida',
+      cancelText: 'Cancelar',
+      confirmText: 'OK',
+      fieldLabelText: 'Data',
+      fieldHintText: 'DD/MM/AAAA',
+      errorFormatText: 'Use o formato DD/MM/AAAA',
+      errorInvalidText: 'Escolha uma data de hoje em diante',
+    );
+    if (escolhido == null) return;
+    setState(() {
+      dia = escolhido;
+      data.text = Formatos.dataNumerica(escolhido);
+    });
+  }
+
+  Future<void> _escolherHorario() async {
+    final escolhido = await showTimePicker(
+      context: context,
+      initialTime: horario ?? const TimeOfDay(hour: 16, minute: 0),
+      helpText: 'Horário da partida',
+      cancelText: 'Cancelar',
+      confirmText: 'OK',
+      hourLabelText: 'Hora',
+      minuteLabelText: 'Minuto',
+      errorInvalidText: 'Horário inválido',
+      builder: (context, filho) => MediaQuery(
+        // Sempre 24 horas, independente da configuração do aparelho.
+        data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
+        child: filho!,
+      ),
+    );
+    if (escolhido == null) return;
+    setState(() {
+      horario = escolhido;
+      hora.text =
+          '${escolhido.hour.toString().padLeft(2, '0')}:${escolhido.minute.toString().padLeft(2, '0')}';
+    });
+  }
+
+  /// Duração fora da lista: horas e minutos, de 15 min a 10 h.
+  Future<void> _outraDuracaoPersonalizada() async {
+    var horas = (duracao ?? 60) ~/ 60,
+        minutos = ((duracao ?? 60) % 60) ~/ 15 * 15;
+    final escolhida = await showDialog<int>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, atualizar) {
+          final total = horas * 60 + minutos;
+          final valida = total >= 15 && total <= 600;
+          return AlertDialog(
+            title: const Text('Duração da partida'),
+            // Um embaixo do outro: cabe em telas estreitas com fonte maior.
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<int>(
+                  initialValue: horas,
+                  decoration: const InputDecoration(labelText: 'Horas'),
+                  items: [
+                    for (var h = 0; h <= 10; h++)
+                      DropdownMenuItem(value: h, child: Text('$h h')),
+                  ],
+                  onChanged: (v) => atualizar(() => horas = v ?? 0),
+                ),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<int>(
+                  initialValue: minutos,
+                  decoration: const InputDecoration(labelText: 'Minutos'),
+                  items: [
+                    for (final m in [0, 15, 30, 45])
+                      DropdownMenuItem(value: m, child: Text('$m min')),
+                  ],
+                  onChanged: (v) => atualizar(() => minutos = v ?? 0),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: valida ? () => Navigator.pop(ctx, total) : null,
+                child: Text(
+                  valida
+                      ? 'Usar ${Formatos.duracao(total)}'
+                      : 'De 15 min a 10 h',
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    // Cancelou ou escolheu: o seletor volta a mostrar a duração real
+    // (e não "Outra duração…").
+    setState(() {
+      if (escolhida != null) duracao = escolhida;
+      _versaoDuracao++;
+    });
+  }
 
   DropdownButtonFormField<int> _dropdown(
     String label,
@@ -101,6 +242,10 @@ class _CreateGameScreenState extends State<CreateGameScreen> {
   Widget build(BuildContext context) {
     final refs = AppScope.of(context).referencias;
     final editing = e != null;
+    final opcoesDuracao = [
+      ..._duracoes,
+      if (duracao != null && !_duracoes.contains(duracao)) duracao!,
+    ]..sort();
     return Form(
       key: form,
       child: ListView(
@@ -124,33 +269,10 @@ class _CreateGameScreenState extends State<CreateGameScreen> {
           ),
           const SizedBox(height: 10),
           _dropdown(
-            'Categoria',
-            refs.categoriasEtarias,
-            categoria,
-            (v) => categoria = v,
-          ),
-          const SizedBox(height: 10),
-          _dropdown(
             'Nível do time',
             refs.niveisTecnicos,
             nivel,
             (v) => nivel = v,
-          ),
-          const SizedBox(height: 10),
-          TextFormField(
-            controller: jogadores,
-            keyboardType: TextInputType.number,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            decoration: const InputDecoration(
-              labelText: 'Quantidade de jogadores',
-              hintText: 'Ex.: 7',
-            ),
-            validator: (v) {
-              final n = int.tryParse(v ?? '');
-              return n == null || n < 5 || n > 30
-                  ? 'Informe de 5 a 30 jogadores por equipe'
-                  : null;
-            },
           ),
           const SizedBox(height: 20),
           const _SectionTitle(
@@ -160,72 +282,85 @@ class _CreateGameScreenState extends State<CreateGameScreen> {
           ),
           TextFormField(
             controller: data,
-            keyboardType: TextInputType.datetime,
+            readOnly: true,
+            onTap: _escolherData,
             decoration: const InputDecoration(
               labelText: 'Data',
-              hintText: 'Ex.: 18/07/2026',
+              hintText: 'DD/MM/AAAA',
               suffixIcon: Icon(Icons.calendar_today_outlined),
             ),
-            validator: (v) {
-              if (v == null || v.isEmpty) return 'Informe a data';
-              return Formatos.lerDataHora(v, '00:00') == null
-                  ? 'Use o formato dd/mm/aaaa'
-                  : null;
-            },
+            validator: (_) => dia == null ? 'Escolha a data' : null,
           ),
           const SizedBox(height: 10),
           TextFormField(
             controller: hora,
-            keyboardType: TextInputType.datetime,
+            readOnly: true,
+            onTap: _escolherHorario,
             decoration: const InputDecoration(
               labelText: 'Horário',
-              hintText: '16:00',
+              hintText: 'HH:mm',
+              suffixIcon: Icon(Icons.schedule),
             ),
-            validator: (v) {
-              if (v == null || v.isEmpty) return 'Informe o horário';
-              final quando = Formatos.lerDataHora(data.text, v);
-              if (Formatos.lerDataHora('01/01/2000', v) == null) {
-                return 'Use o formato hh:mm';
-              }
-              if (quando != null && quando.isBefore(DateTime.now())) {
-                return 'Escolha uma data e horário futuros';
+            validator: (_) {
+              if (horario == null) return 'Escolha o horário';
+              final inicio = _inicio;
+              if (inicio != null && !inicio.isAfter(DateTime.now())) {
+                return 'Escolha um horário futuro';
               }
               return null;
             },
           ),
           const SizedBox(height: 10),
-          TextFormField(
-            controller: cidade,
-            decoration: const InputDecoration(
-              labelText: 'Cidade',
-              hintText: 'São Paulo',
-            ),
-            validator: _obrigatorio,
+          DropdownButtonFormField<int>(
+            key: ValueKey('duracao-$duracao-$_versaoDuracao'),
+            initialValue: duracao,
+            decoration: const InputDecoration(labelText: 'Duração da partida'),
+            items: [
+              for (final d in opcoesDuracao)
+                DropdownMenuItem(value: d, child: Text(Formatos.duracao(d))),
+              const DropdownMenuItem(
+                value: _outraDuracao,
+                child: Text('Outra duração…'),
+              ),
+            ],
+            onChanged: (v) {
+              if (v == _outraDuracao) {
+                _outraDuracaoPersonalizada();
+              } else {
+                setState(() => duracao = v);
+              }
+            },
+            validator: (v) =>
+                (duracao ?? 0) <= 0 ? 'Escolha a duração da partida' : null,
           ),
           const SizedBox(height: 10),
-          TextFormField(
-            controller: bairro,
-            decoration: const InputDecoration(
-              labelText: 'Bairro / região',
-              hintText: 'Ex.: Vila Mariana',
-            ),
-            validator: _obrigatorio,
+          DropdownButtonFormField<String>(
+            initialValue: siglaEstado,
+            decoration: const InputDecoration(labelText: 'Estado'),
+            items: refs.estados
+                .map(
+                  (s) => DropdownMenuItem(value: s.sigla, child: Text(s.sigla)),
+                )
+                .toList(),
+            onChanged: (v) => setState(() {
+              // Cidade e local de outro estado nunca ficam por engano.
+              if (v != siglaEstado) {
+                cidade.clear();
+                local.clear();
+                _localEscolhido(null);
+              }
+              siglaEstado = v;
+            }),
+            validator: (v) => v == null ? 'Selecione o estado' : null,
           ),
           const SizedBox(height: 10),
-          TextFormField(
+          CampoCidade(controller: cidade, siglaEstado: siglaEstado),
+          const SizedBox(height: 10),
+          CampoLocal(
             controller: local,
-            decoration: const InputDecoration(
-              labelText: 'Local da partida',
-              hintText: 'Nome do campo ou quadra',
-            ),
-            validator: _obrigatorio,
-          ),
-          const SizedBox(height: 10),
-          _dropdown(
-            'Mando de campo',
-            refs.mandosCampo,
-            mando,
-            (v) => mando = v,
+            siglaEstado: siglaEstado,
+            cidade: _cidadeOficial,
+            onLocal: _localEscolhido,
           ),
           const SizedBox(height: 10),
           TextFormField(
@@ -291,19 +426,25 @@ class _CreateGameScreenState extends State<CreateGameScreen> {
       await widget.onSalvar(
         RascunhoAnuncio(
           idModalidade: modalidade!,
-          idCategoriaEtaria: categoria!,
           idNivelTecnico: nivel!,
-          idMandoCampo: mando,
-          quantidadeJogadores: int.parse(jogadores.text),
-          dataHoraInicio: Formatos.lerDataHora(data.text, hora.text)!,
-          cidade: cidade.text.trim(),
+          dataHoraInicio: _inicio!,
+          duracaoMinutos: duracao!,
+          // Nome oficial do IBGE (o validador da cidade já garantiu).
+          cidade: _cidadeOficial!,
           siglaEstado: siglaEstado!,
-          bairro: opcional(bairro),
           nomeLocal: local.text.trim(),
+          endereco: endereco,
+          latitude: latitude,
+          longitude: longitude,
           valorAluguelPorTime: taxaTexto.isEmpty
               ? null
               : double.parse(taxaTexto),
           descricao: opcional(observacoes),
+          // Fora do formulário: um anúncio antigo editado mantém o que tinha.
+          idCategoriaEtaria: e?.categoriaEtaria?.id,
+          idMandoCampo: e?.mandoCampo?.id,
+          quantidadeJogadores: e?.quantidadeJogadores,
+          bairro: e?.bairro,
         ),
       );
     } finally {
@@ -373,34 +514,57 @@ class ConversationsScreen extends StatelessWidget {
     final app = AppScope.of(context);
     final idMeuTime = app.time!.id;
     return Carregador<List<SolicitacaoConfronto>>(
-      carregar: () async =>
-          (await app.repositorios.solicitacoes.listarDoMeuTime())
-              .where((s) => s.status.emAberto)
-              .toList(),
-      builder: (context, conversas, _) => ListView(
-        padding: const EdgeInsets.fromLTRB(18, 22, 18, 26),
-        children: [
-          const PageTitle(
-            'A conversa que vira jogo.',
-            subtitle: 'Combine os detalhes com os responsáveis de cada time.',
+      carregar: () => app.repositorios.solicitacoes.listarDoMeuTime(),
+      builder: (context, todas, _) {
+        // Pendentes ainda não têm chat: ficam numa seção à parte, para o dono
+        // analisar e o desafiante acompanhar. Conversas = chat liberado.
+        final pendentes = todas.where((s) => s.status.emAberto).toList();
+        final conversas = todas
+            .where((s) => s.chatLiberado && s.idPartida != null)
+            .toList();
+        Widget secao(String titulo) => Padding(
+          padding: const EdgeInsets.only(bottom: 10, top: 4),
+          child: Text(
+            titulo,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
           ),
-          if (conversas.isEmpty)
-            const EmptyState(
-              title: 'Nenhuma conversa por enquanto.',
-              message:
-                  'Demonstre interesse em um jogo ou aguarde solicitações para o seu anúncio.',
+        );
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(18, 22, 18, 26),
+          children: [
+            const PageTitle(
+              'A conversa que vira jogo.',
+              subtitle: 'Combine os detalhes com os responsáveis de cada time.',
             ),
-          for (final s in conversas)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: _ConversaTile(
-                solicitacao: s,
-                adversario: s.adversario(idMeuTime),
-                onTap: () => onOpen(s),
+            if (pendentes.isEmpty && conversas.isEmpty)
+              const EmptyState(
+                title: 'Nenhuma conversa por enquanto.',
+                message:
+                    'Demonstre interesse em um jogo ou aguarde solicitações para o seu anúncio. O chat abre quando o desafio é aceito.',
               ),
-            ),
-        ],
-      ),
+            if (pendentes.isNotEmpty) secao('Aguardando aceite'),
+            for (final s in pendentes)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _ConversaTile(
+                  solicitacao: s,
+                  adversario: s.adversario(idMeuTime),
+                  onTap: () => onOpen(s),
+                ),
+              ),
+            if (conversas.isNotEmpty) secao('Conversas'),
+            for (final s in conversas)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _ConversaTile(
+                  solicitacao: s,
+                  adversario: s.adversario(idMeuTime),
+                  onTap: () => onOpen(s),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -449,7 +613,11 @@ class _ConversaTile extends StatelessWidget {
                     Text(
                       s.ultimaMensagem ??
                           s.mensagemInicial ??
-                          'Interesse no jogo de ${Formatos.dataCurta(s.anuncio.dataHoraInicio)}.',
+                          (s.aguardandoAceite
+                              ? (s.timeAnunciante.id == adversario.id
+                                    ? 'Aguardando o aceite para o jogo de ${Formatos.dataCurta(s.anuncio.dataHoraInicio)}.'
+                                    : 'Quer jogar contra vocês em ${Formatos.dataCurta(s.anuncio.dataHoraInicio)}. Toque para analisar.')
+                              : 'Jogo de ${Formatos.dataCurta(s.anuncio.dataHoraInicio)}.'),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -521,12 +689,28 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<SolicitacaoConfronto> _carregar() async {
     final repo = AppScope.repos(context).solicitacoes;
     final s = await repo.obter(widget.idSolicitacao);
-    final lista = await repo.mensagens(widget.idSolicitacao);
+    // Antes do aceite não há chat: nem pede as mensagens (a API recusaria).
+    final lista = s.chatLiberado
+        ? await repo.mensagens(widget.idSolicitacao)
+        : const <Mensagem>[];
     mensagens
       ..clear()
       ..addAll(lista);
     return s;
   }
+
+  /// Texto no lugar das mensagens enquanto o chat não está liberado.
+  String _avisoSemChat(
+    SolicitacaoConfronto s,
+    bool souAnunciante,
+  ) => switch (s.status) {
+    StatusSolicitacao.pendente when souAnunciante =>
+      '${s.timeSolicitante.nome} quer jogar contra vocês. Aceite o desafio para liberar o chat entre os capitães.',
+    StatusSolicitacao.pendente =>
+      'Solicitação enviada. O chat é liberado quando ${s.timeAnunciante.nome} aceitar o desafio.',
+    _ =>
+      'Solicitação ${s.status.rotulo.toLowerCase()}. O chat entre os capitães não está disponível.',
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -540,14 +724,19 @@ class _ChatScreenState extends State<ChatScreen> {
             ? s.timeAnunciante
             : s.timeSolicitante;
         final hoje = DateUtils.isSameDay(s.dataSolicitacao, DateTime.now());
+        final souAnunciante = s.souAnunciante(idMeuTime);
+        // Só o dono do anúncio aceita; o aceite confirma a partida e libera o chat.
         final (rotulo, acao) = switch (s) {
           _ when s.idPartida != null => (
             'Ver partida',
             () => widget.onVerPartida(s.idPartida!),
           ),
           _ when !s.status.emAberto => (s.status.rotulo, null),
-          _ when s.euConfirmei(idMeuTime) => ('Aguardando o adversário', null),
-          _ => ('Confirmar partida', () => widget.onConfirmar(s)),
+          _ when souAnunciante => (
+            'Aceitar desafio',
+            () => widget.onConfirmar(s),
+          ),
+          _ => ('Aguardando o aceite', null),
         };
         return ListView(
           padding: const EdgeInsets.fromLTRB(18, 16, 18, 26),
@@ -607,6 +796,27 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                         ),
                         const SizedBox(height: 12),
+                        if (!s.chatLiberado)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 20),
+                            child: Column(
+                              children: [
+                                const Icon(
+                                  Icons.lock_outline,
+                                  color: AppColors.muted,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  _avisoSemChat(s, souAnunciante),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: AppColors.muted,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         for (final m in mensagens)
                           _Balao(
                             texto: m.texto,
@@ -615,34 +825,36 @@ class _ChatScreenState extends State<ChatScreen> {
                       ],
                     ),
                   ),
-                  const Divider(height: 1),
-                  Padding(
-                    padding: const EdgeInsets.all(9),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: input,
-                            enabled:
-                                s.status.emAberto ||
-                                s.status == StatusSolicitacao.confirmada,
-                            maxLength: 1000,
-                            decoration: const InputDecoration(
-                              hintText: 'Escreva sua mensagem…',
-                              border: InputBorder.none,
-                              filled: false,
-                              counterText: '',
+                  if (s.chatLiberado) ...[
+                    const Divider(height: 1),
+                    Padding(
+                      padding: const EdgeInsets.all(9),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: input,
+                              maxLength: 1000,
+                              decoration: const InputDecoration(
+                                hintText: 'Escreva sua mensagem…',
+                                border: InputBorder.none,
+                                filled: false,
+                                counterText: '',
+                              ),
+                              onSubmitted: (_) => _send(),
                             ),
-                            onSubmitted: (_) => _send(),
                           ),
-                        ),
-                        IconButton(
-                          onPressed: enviando ? null : _send,
-                          icon: const Icon(Icons.send, color: AppColors.forest),
-                        ),
-                      ],
+                          IconButton(
+                            onPressed: enviando ? null : _send,
+                            icon: const Icon(
+                              Icons.send,
+                              color: AppColors.forest,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -652,7 +864,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   TagPill(
-                    s.status.emAberto ? 'Em negociação' : s.status.rotulo,
+                    s.status.emAberto ? 'Aguardando aceite' : s.status.rotulo,
                     green: true,
                   ),
                   const SizedBox(height: 8),
@@ -780,7 +992,7 @@ class GamesScreen extends StatelessWidget {
   static const tabs = [
     'Todos',
     'Aguardando',
-    'Negociando',
+    'Em análise',
     'Confirmado',
     'Realizado',
     'Cancelado',
@@ -810,7 +1022,7 @@ class GamesScreen extends StatelessWidget {
           for (final s in solicitacoes)
             if (s.status.emAberto)
               _ItemJogo(
-                status: 'Negociando',
+                status: 'Em análise', // aguardando o aceite do anunciante
                 adversario: s.adversario(time.id),
                 data: s.anuncio.dataHoraInicio,
                 acao: 'Ver detalhes',
@@ -920,7 +1132,7 @@ class GamesScreen extends StatelessWidget {
                           TagPill(
                             item.status,
                             green: item.status == 'Confirmado',
-                            orange: item.status == 'Negociando',
+                            orange: item.status == 'Em análise',
                           ),
                           const Spacer(),
                           ActionButton(

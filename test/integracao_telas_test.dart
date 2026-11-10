@@ -64,6 +64,7 @@ Future<(String, String)> _capitaoComAnuncio(String marca) async {
       idNivelTecnico: refs.niveisTecnicos.first.id,
       quantidadeJogadores: 7,
       dataHoraInicio: DateTime.now().add(const Duration(days: 3)),
+      duracaoMinutos: 90,
       cidade: 'São Paulo',
       siglaEstado: 'SP',
       nomeLocal: 'Arena $marca',
@@ -160,23 +161,18 @@ void main() {
       await tester.tap(find.text('Sim, tenho interesse'));
       await _esperarTexto(tester, find.text('Quase tudo pronto!'));
 
-      // Mensagem real.
-      await tester.enterText(find.byType(TextField).first, 'Bora jogar?');
-      await tester.tap(find.byIcon(Icons.send));
-      await _esperarTexto(tester, find.text('Bora jogar?'));
+      // Antes do aceite: sem chat (nem caixa de mensagem) e sem botão de aceitar.
+      expect(
+        find.textContaining('O chat é liberado quando Dono $marca aceitar'),
+        findsOneWidget,
+      );
+      expect(find.byIcon(Icons.send), findsNothing);
+      expect(find.text('Aguardando o aceite'), findsOneWidget);
 
-      // Um lado confirma: a partida ainda depende do outro time.
       await _semSnackbar(tester);
-      await tester.ensureVisible(find.text('Confirmar partida'));
-      await tester.pump();
-      await tester.tap(find.text('Confirmar partida'));
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(find.widgetWithText(FilledButton, 'Confirmar partida'));
-      await _esperarTexto(tester, find.text('Aguardando o adversário'));
-
       await tester.tap(find.text('Conversas').last);
-      await _esperarTexto(tester, find.text(nomeDono));
-      expect(find.text('Bora jogar?'), findsOneWidget);
+      await _esperarTexto(tester, find.text('Aguardando aceite'));
+      expect(find.text(nomeDono), findsOneWidget);
 
       await tester.tap(find.byTooltip('Notificações'));
       await _esperarTexto(tester, find.text('Tudo tranquilo por aqui.'));
@@ -198,17 +194,27 @@ void main() {
       await tester.tap(find.byTooltip('Notificações'));
       await _esperarTexto(tester, find.text('Tem rival querendo jogo!'));
       await tester.tap(find.text('Tem rival querendo jogo!'));
-      await _esperarTexto(tester, find.text('Bora jogar?'));
+      await _esperarTexto(tester, find.text('Aceitar desafio'));
+      expect(find.byIcon(Icons.send), findsNothing); // chat ainda fechado
 
-      // O dono confirma: as telas mostram a partida vinda do banco.
+      // O dono aceita: partida confirmada vinda do banco e chat liberado.
       await _semSnackbar(tester);
-      await tester.ensureVisible(find.text('Confirmar partida'));
+      await tester.ensureVisible(find.text('Aceitar desafio'));
       await tester.pump();
-      await tester.tap(find.text('Confirmar partida'));
+      await tester.tap(find.text('Aceitar desafio'));
       await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(find.widgetWithText(FilledButton, 'Confirmar partida'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Aceitar desafio'));
       await _esperarTexto(tester, find.text('Partida confirmada!'));
       expect(find.text('Visitante $marca'), findsOneWidget);
+
+      await _semSnackbar(tester);
+      await tester.ensureVisible(find.text('Conversar'));
+      await tester.pump();
+      await tester.tap(find.text('Conversar'));
+      await _esperarTexto(tester, find.byIcon(Icons.send));
+      await tester.enterText(find.byType(TextField).first, 'Bora jogar?');
+      await tester.tap(find.byIcon(Icons.send));
+      await _esperarTexto(tester, find.text('Bora jogar?'));
 
       await tester.tap(find.text('Início').last);
       await _esperarTexto(tester, find.text('Próxima partida'));

@@ -1,4 +1,5 @@
 import '../../models/anuncio_partida.dart';
+import '../../models/local_esportivo.dart';
 import '../../models/notificacao.dart';
 import '../../models/partida.dart';
 import '../../models/referencia.dart';
@@ -27,6 +28,7 @@ Repositorios criarRepositoriosApi(
   solicitacoes: ApiSolicitacaoRepository(api),
   partidas: ApiPartidaRepository(api),
   notificacoes: ApiNotificacaoRepository(api),
+  locais: ApiLocalRepository(api),
 );
 
 class ApiAuthRepository implements AuthRepository {
@@ -232,4 +234,20 @@ class ApiNotificacaoRepository implements NotificacaoRepository {
   @override
   Future<void> marcarComoLida(String id) =>
       _api.patch('/notificacoes/$id/lida');
+}
+
+/// A API consulta a fonte externa (com cache); o app filtra a lista localmente.
+class ApiLocalRepository implements LocalRepository {
+  ApiLocalRepository(this._api);
+  final ApiClient _api;
+  @override
+  Future<LocaisDaCidade> daCidade(String siglaEstado, String cidade) async {
+    final dados =
+        await _api.get('/locais', query: {'uf': siglaEstado, 'cidade': cidade})
+            as _Json;
+    return LocaisDaCidade(
+      _lista(dados['locais'], LocalEsportivo.fromJson),
+      atribuicao: dados['atribuicao'] as String?,
+    );
+  }
 }

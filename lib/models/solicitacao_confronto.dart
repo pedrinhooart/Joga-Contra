@@ -2,10 +2,10 @@ import 'anuncio_partida.dart';
 import 'time.dart';
 
 enum StatusSolicitacao {
-  /// Enviada; capitães negociando pela conversa.
-  pendente('pendente', 'Negociando partida'),
+  /// Enviada; aguardando o aceite do time anunciante (sem chat ainda).
+  pendente('pendente', 'Aguardando aceite'),
 
-  /// Os dois capitães confirmaram: a partida foi criada.
+  /// O time anunciante aceitou: a partida foi criada e o chat liberado.
   confirmada('confirmada', 'Confirmada'),
   recusada('recusada', 'Recusada'),
   cancelada('cancelada', 'Cancelada'),
@@ -39,6 +39,7 @@ class SolicitacaoConfronto {
     this.ultimaMensagem,
     this.dataUltimaMensagem,
     this.mensagensNaoLidas = 0,
+    this.chatLiberado = false,
   });
 
   final String id;
@@ -49,13 +50,19 @@ class SolicitacaoConfronto {
   final String? mensagemInicial;
   final DateTime? dataResposta;
 
-  /// Confirmação depende da concordância das duas equipes.
+  /// O pedido é a concordância do desafiante; o aceite do anunciante confirma.
   final bool confirmadoAnunciante, confirmadoSolicitante;
   final String? idPartida;
 
   final String? ultimaMensagem;
   final DateTime? dataUltimaMensagem;
   final int mensagensNaoLidas;
+
+  /// O chat só existe depois que o time anunciante aceita (a API valida).
+  final bool chatLiberado;
+
+  /// Pendente: aguardando o aceite do time anunciante.
+  bool get aguardandoAceite => status == StatusSolicitacao.pendente;
 
   bool souAnunciante(String idMeuTime) => timeAnunciante.id == idMeuTime;
   ResumoTime adversario(String idMeuTime) =>
@@ -91,6 +98,8 @@ class SolicitacaoConfronto {
             ? null
             : DateTime.parse(json['dataUltimaMensagem'] as String).toLocal(),
         mensagensNaoLidas: (json['mensagensNaoLidas'] as num?)?.toInt() ?? 0,
+        chatLiberado:
+            json['chatLiberado'] as bool? ?? json['status'] == 'confirmada',
       );
 }
 

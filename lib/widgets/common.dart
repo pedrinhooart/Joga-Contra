@@ -368,7 +368,8 @@ class AnuncioCard extends StatelessWidget {
               anuncio.modalidade.nome,
               green: anuncio.modalidade.codigo == 'society',
             ),
-            TagPill(anuncio.categoriaEtaria.nome),
+            if (anuncio.categoriaEtaria != null)
+              TagPill(anuncio.categoriaEtaria!.nome),
             if (anuncio.nivelTecnico != null)
               TagPill(anuncio.nivelTecnico!.nome),
           ],

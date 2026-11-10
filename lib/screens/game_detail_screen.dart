@@ -78,7 +78,8 @@ class GameDetailScreen extends StatelessWidget {
                   runSpacing: 6,
                   children: [
                     TagPill(anuncio.modalidade.nome, green: true),
-                    TagPill(anuncio.categoriaEtaria.nome),
+                    if (anuncio.categoriaEtaria != null)
+                      TagPill(anuncio.categoriaEtaria!.nome),
                     if (anuncio.nivelTecnico != null)
                       TagPill(anuncio.nivelTecnico!.nome),
                   ],
@@ -95,25 +96,36 @@ class GameDetailScreen extends StatelessWidget {
                     'Horário',
                     Formatos.hora(anuncio.dataHoraInicio),
                   ),
+                  if (anuncio.duracaoMinutos != null)
+                    (
+                      Icons.timelapse,
+                      'Duração',
+                      Formatos.duracao(anuncio.duracaoMinutos!),
+                    ),
                   (
                     Icons.place_outlined,
                     'Local',
                     [
-                      anuncio.nomeLocal,
-                      if (anuncio.bairro != null) anuncio.bairro!,
-                    ].join(' · '),
+                      [
+                        anuncio.nomeLocal,
+                        if (anuncio.bairro != null) anuncio.bairro!,
+                      ].join(' · '),
+                      ?anuncio.endereco,
+                    ].join('\n'),
                   ),
+                  // Mando e quantidade só existem em anúncios antigos.
                   if (anuncio.mandoCampo != null)
                     (
                       Icons.home_outlined,
                       'Mando de campo',
                       anuncio.mandoCampo!.nome,
                     ),
-                  (
-                    Icons.people_outline,
-                    'Jogadores',
-                    '${anuncio.quantidadeJogadores} por equipe',
-                  ),
+                  if (anuncio.quantidadeJogadores != null)
+                    (
+                      Icons.people_outline,
+                      'Jogadores',
+                      '${anuncio.quantidadeJogadores} por equipe',
+                    ),
                   if (anuncio.valorAluguelPorTime != null)
                     (
                       Icons.sports_soccer,

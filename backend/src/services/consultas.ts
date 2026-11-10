@@ -13,15 +13,16 @@ export const SELECT_ANUNCIO = `
          n.ordem AS ordem_nivel_tecnico,
          a.id_mando_campo, mc.codigo AS codigo_mando_campo, mc.nome AS nome_mando_campo,
          mc.ordem AS ordem_mando_campo,
-         a.quantidade_jogadores, a.data_hora_inicio, a.cidade, a.sigla_estado, a.bairro, a.nome_local,
-         a.endereco, a.valor_aluguel_por_time, a.descricao, a.status,
+         a.quantidade_jogadores, a.data_hora_inicio, a.duracao_minutos, a.cidade, a.sigla_estado, a.bairro,
+         a.nome_local,
+         a.endereco, a.latitude, a.longitude, a.valor_aluguel_por_time, a.descricao, a.status,
          (SELECT COUNT(*) FROM solicitacoes_confronto s
            WHERE s.id_anuncio = a.id_anuncio AND s.status = 'pendente') AS total_solicitacoes
     FROM anuncios_partidas a
     JOIN times t ON t.id_time = a.id_time
     JOIN usuarios u ON u.id_usuario = t.id_capitao
     JOIN modalidades m ON m.id_modalidade = a.id_modalidade
-    JOIN categorias_etarias c ON c.id_categoria_etaria = a.id_categoria_etaria
+    LEFT JOIN categorias_etarias c ON c.id_categoria_etaria = a.id_categoria_etaria
     JOIN niveis_tecnicos n ON n.id_nivel_tecnico = a.id_nivel_tecnico
     LEFT JOIN mandos_campo mc ON mc.id_mando_campo = a.id_mando_campo`;
 
@@ -78,7 +79,10 @@ async function montarSolicitacoes(db: Executor, linhas: Linha[], idMeuTime: stri
   // Inclui anúncios excluídos: o histórico da conversa continua acessível.
   const anuncios = await consultar(db, `${SELECT_ANUNCIO} WHERE a.id_anuncio IN (${marcadores(ids.length)})`, ids);
   const porId = new Map(anuncios.map((a) => [a.id_anuncio, mapearAnuncio(a)]));
-  return linhas.map((r) => ({
+  return linhas.map((r) => {
+    // Chat só depois do aceite: antes disso, nada da conversa é exposto.
+    const chatLiberado = r.status === 'confirmada';
+    return {
     idSolicitacao: r.id_solicitacao,
     anuncio: porId.get(r.id_anuncio),
     timeSolicitante: mapearResumoTime(r, 'solicitante'),
@@ -90,10 +94,16 @@ async function montarSolicitacoes(db: Executor, linhas: Linha[], idMeuTime: stri
     confirmadoAnunciante: r.data_confirmacao_anunciante != null,
     confirmadoSolicitante: r.data_confirmacao_solicitante != null,
     idPartida: r.id_partida,
-    ultimaMensagem: r.ultima_mensagem,
-    dataUltimaMensagem: dataIso(r.data_ultima_mensagem),
-    mensagensNaoLidas: r.id_time_anunciante === idMeuTime ? r.nao_lidas_anunciante : r.nao_lidas_solicitante,
-  }));
+    chatLiberado,
+    ultimaMensagem: chatLiberado ? r.ultima_mensagem : null,
+    dataUltimaMensagem: chatLiberado ? dataIso(r.data_ultima_mensagem) : null,
+    mensagensNaoLidas: !chatLiberado
+      ? 0
+      : r.id_time_anunciante === idMeuTime
+        ? r.nao_lidas_anunciante
+        : r.nao_lidas_solicitante,
+    };
+  });
 }
 
 /** Solicitações em que `idTime` é anunciante ou solicitante. */
@@ -119,7 +129,7 @@ export async function listarSolicitacoesDoAnuncio(db: Executor, idAnuncio: strin
 export async function participacaoNaSolicitacao(db: Executor, idSolicitacao: string, idTime: string) {
   const [linha] = await consultar(
     db,
-    `SELECT s.id_solicitacao, s.id_time_anunciante, s.id_time_solicitante
+    `SELECT s.id_solicitacao, s.id_time_anunciante, s.id_time_solicitante, s.status
        FROM solicitacoes_confronto s
       WHERE s.id_solicitacao = ? AND (s.id_time_anunciante = ? OR s.id_time_solicitante = ?)`,
     [idSolicitacao, idTime, idTime],
@@ -198,4 +208,16 @@ export async function obterPartida(db: Executor, idPartida: string, idTime: stri
   );
   if (!linha) throw new ApiError(404, 'Partida não encontrada.', 'NOT_FOUND');
   return mapearPartida(linha);
+}
+
+/**
+ * Chat entre capitães: só os dois times da solicitação e só depois que o time
+ * anunciante aceitou (solicitação confirmada). Antes disso, nem leitura.
+ */
+export async function exigirChatLiberado(db: Executor, idSolicitacao: string, idTime: string) {
+  const participacao = await participacaoNaSolicitacao(db, idSolicitacao, idTime);
+  if (participacao.status !== 'confirmada') {
+    throw new ApiError(403, 'O chat é liberado quando o time anunciante aceita o desafio.', 'CHAT_BLOQUEADO');
+  }
+  return participacao;
 }

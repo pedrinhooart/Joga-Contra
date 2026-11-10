@@ -19,6 +19,8 @@ const schema = z.object({
   ROTINAS_PRESERVAR_ATE: z.coerce.date().optional(),
   /** Pasta das imagens enviadas (escudos). Relativa à pasta da API. */
   ARQUIVOS_DIR: z.string().min(1).default('arquivos'),
+  /** Servidor Overpass (OpenStreetMap) para a busca de locais esportivos. */
+  OVERPASS_URL: z.string().url().optional(),
 });
 
 export const env = schema.parse(process.env);

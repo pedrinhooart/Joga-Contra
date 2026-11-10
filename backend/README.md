@@ -38,17 +38,18 @@ O `.env` é ignorado pelo Git. Variáveis: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_
 | PATCH `/times/:id` | capitão | Edita o time (nome, descrição etc.). Descrição em branco remove a descrição |
 | PUT `/times/:id/escudo` | capitão | Foto do time: corpo binário `image/jpeg`, `image/png` ou `image/webp`, até 2 MB (formato conferido pelos bytes). Devolve o time com `urlEscudo` |
 | GET `/arquivos/...` | público | Imagens enviadas (endereço vem em `urlEscudo`) |
-| GET `/anuncios` | JWT | Busca: `texto`, `cidade`, `siglaEstado`, `idModalidade`, `idCategoriaEtaria`, `idNivelTecnico`, `data`, `horario`, `fusoMinutos`, `pagina`, `limite` |
+| GET `/anuncios` | JWT | Busca: `texto`, `cidade`, `siglaEstado`, `idModalidade`, `idNivelTecnico`, `data`, `horario`, `fusoMinutos`, `pagina`, `limite` (`idCategoriaEtaria` só encontra anúncios antigos, que têm categoria) |
 | GET `/anuncios/meus`, `/anuncios/:id` | JWT | |
-| POST `/anuncios` | capitão | Publica pelo próprio time |
+| POST `/anuncios` | capitão | Publica pelo próprio time. Obrigatórios: modalidade, nível, data e hora, `duracaoMinutos` (15 a 600), cidade, UF e local. Opcionais: `endereco`, `latitude`/`longitude` (juntas), taxa, descrição; categoria, quantidade, mando e bairro só por compatibilidade |
+| GET `/locais?uf=&cidade=` | JWT | Locais esportivos reais da cidade (OpenStreetMap, com cache de 7 dias em memória e disco). Devolve `{ fonte, atribuicao, locais }`; o app filtra localmente |
 | PUT `/anuncios/:id`, PATCH `/anuncios/:id/status`, DELETE `/anuncios/:id` | capitão dono | Editar, pausar/reativar, excluir (lógica) |
 | GET `/anuncios/:id/solicitacoes` | capitão dono | Analisa quem solicitou |
 | POST `/solicitacoes` | capitão | "Tenho interesse"; repetir devolve a pendente existente |
 | GET `/solicitacoes/minhas`, `/solicitacoes/:id` | participante | |
-| PATCH `/solicitacoes/:id/confirmar` | participante | Concordância do time; com os dois lados, cria a partida |
+| PATCH `/solicitacoes/:id/confirmar` | anunciante | **Aceite do desafio.** O pedido já é a concordância do desafiante; o aceite confirma a partida, encerra o anúncio e as demais solicitações, notifica e libera o chat. O desafiante recebe 403 |
 | PATCH `/solicitacoes/:id/recusar` | anunciante | |
 | PATCH `/solicitacoes/:id/cancelar` | solicitante | |
-| GET, POST `/solicitacoes/:id/mensagens` | participante | GET marca como lidas |
+| GET, POST `/solicitacoes/:id/mensagens` | participante, após o aceite | Chat entre os capitães. Antes do aceite: 403 `CHAT_BLOQUEADO` (o gatilho do banco também recusa). Quem não participa: 404. GET marca como lidas |
 | GET `/partidas/minhas`, `/partidas/proxima`, `/partidas/:id` | participante | |
 | PATCH `/partidas/:id/cancelar` | participante | |
 | POST `/partidas/:id/avaliacoes` | participante | Só em partida realizada; todos os critérios ativos |

@@ -1,4 +1,5 @@
 import '../models/anuncio_partida.dart';
+import '../models/local_esportivo.dart';
 import '../models/notificacao.dart';
 import '../models/partida.dart';
 import '../models/referencia.dart';
@@ -81,6 +82,11 @@ abstract interface class NotificacaoRepository {
 }
 
 /// Agrupa os repositórios para injeção nas telas.
+/// Locais esportivos reais de uma cidade, para sugerir no anúncio.
+abstract interface class LocalRepository {
+  Future<LocaisDaCidade> daCidade(String siglaEstado, String cidade);
+}
+
 class Repositorios {
   const Repositorios({
     required this.auth,
@@ -90,6 +96,7 @@ class Repositorios {
     required this.solicitacoes,
     required this.partidas,
     required this.notificacoes,
+    required this.locais,
   });
   final AuthRepository auth;
   final ReferenciaRepository referencias;
@@ -98,4 +105,5 @@ class Repositorios {
   final SolicitacaoRepository solicitacoes;
   final PartidaRepository partidas;
   final NotificacaoRepository notificacoes;
+  final LocalRepository locais;
 }

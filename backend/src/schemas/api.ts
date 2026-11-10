@@ -48,21 +48,31 @@ export const atualizacaoTimeSchema = z
   })
   .partial();
 
-export const anuncioSchema = z.object({
-  idModalidade: idReferencia,
-  idCategoriaEtaria: idReferencia,
-  idNivelTecnico: idReferencia,
-  idMandoCampo: idReferencia.nullish().transform((v) => v ?? null),
-  quantidadeJogadores: z.number().int().min(5).max(30),
-  dataHoraInicio: z.string().datetime({ offset: true }).transform((v) => new Date(v)),
-  cidade: z.string().trim().min(1).max(100),
-  siglaEstado,
-  bairro: textoOpcional(100),
-  nomeLocal: z.string().trim().min(1).max(160),
-  endereco: textoOpcional(255),
-  valorAluguelPorTime: z.number().min(0).max(99999999).nullish().transform((v) => v ?? null),
-  descricao: textoOpcional(1000),
-});
+// Categoria, quantidade, mando e bairro são opcionais: o formulário atual não
+// os pede (anúncios antigos mantêm os seus). A duração é obrigatória.
+export const anuncioSchema = z
+  .object({
+    idModalidade: idReferencia,
+    idCategoriaEtaria: idReferencia.nullish().transform((v) => v ?? null),
+    idNivelTecnico: idReferencia,
+    idMandoCampo: idReferencia.nullish().transform((v) => v ?? null),
+    quantidadeJogadores: z.number().int().min(5).max(30).nullish().transform((v) => v ?? null),
+    dataHoraInicio: z.string().datetime({ offset: true }).transform((v) => new Date(v)),
+    duracaoMinutos: z.number().int().min(15).max(600),
+    cidade: z.string().trim().min(1).max(100),
+    siglaEstado,
+    bairro: textoOpcional(100),
+    nomeLocal: z.string().trim().min(1).max(160),
+    endereco: textoOpcional(255),
+    latitude: z.number().min(-90).max(90).nullish().transform((v) => v ?? null),
+    longitude: z.number().min(-180).max(180).nullish().transform((v) => v ?? null),
+    valorAluguelPorTime: z.number().min(0).max(99999999).nullish().transform((v) => v ?? null),
+    descricao: textoOpcional(1000),
+  })
+  .refine((a) => (a.latitude === null) === (a.longitude === null), {
+    message: 'Informe latitude e longitude juntas.',
+    path: ['latitude'],
+  });
 
 export const statusAnuncioSchema = z.object({ status: z.enum(['ativo', 'pausado']) });
 

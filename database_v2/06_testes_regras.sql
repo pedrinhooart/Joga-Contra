@@ -144,14 +144,14 @@ CALL teste_deve_falhar('Solicitação não pode nascer confirmada',
   CONCAT("INSERT INTO solicitacoes_confronto (id_solicitacao, id_anuncio, id_time_solicitante, status) VALUES ('c9999999-9999-4999-8999-999999999999', '", @an1, "', '", @t2, "', 'confirmada')"));
 
 -- Mensagens
-CALL teste_executar('Capitão envolvido envia mensagem',
+CALL teste_deve_falhar('Mensagem antes do aceite do time anunciante é rejeitada (chat fechado)',
   CONCAT("INSERT INTO mensagens (id_mensagem, id_solicitacao, id_time_remetente, id_usuario_remetente, texto) VALUES ('d1111111-1111-4111-8111-111111111111', '", @s2, "', '", @t2, "', '", @u2, "', 'Sábado às 16h?')"));
 CALL teste_deve_falhar('Usuário que não é capitão do time remetente não envia mensagem',
   CONCAT("INSERT INTO mensagens (id_mensagem, id_solicitacao, id_time_remetente, id_usuario_remetente, texto) VALUES ('d2222222-2222-4222-8222-222222222222', '", @s2, "', '", @t2, "', '", @u5, "', 'Oi')"));
 CALL teste_deve_falhar('Time fora da solicitação não envia mensagem',
   CONCAT("INSERT INTO mensagens (id_mensagem, id_solicitacao, id_time_remetente, id_usuario_remetente, texto) VALUES ('d2222222-2222-4222-8222-222222222222', '", @s2, "', '", @t3, "', '", @u3, "', 'Oi')"));
-CALL teste_verificar('Resumo da conversa: última mensagem e não lidas do anunciante',
-  (SELECT ultima_mensagem = 'Sábado às 16h?' AND nao_lidas_anunciante = 1 AND nao_lidas_solicitante = 0
+CALL teste_verificar('Solicitação pendente não tem conversa',
+  (SELECT ultima_mensagem IS NULL AND nao_lidas_anunciante = 0 AND nao_lidas_solicitante = 0
      FROM vis_resumo_solicitacoes WHERE id_solicitacao = @s2));
 
 -- -----------------------------------------------------------------------------

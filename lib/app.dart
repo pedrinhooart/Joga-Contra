@@ -342,7 +342,7 @@ class _AppShellState extends State<AppShell> {
   Future<void> _demonstrarInteresse(AnuncioPartida anuncio) async {
     final ok = await _perguntar(
       'Bora marcar esse jogo?',
-      'Você quer demonstrar interesse neste jogo? Vamos abrir uma conversa com o responsável pelo time.',
+      'Vamos enviar sua solicitação ao capitão do time. O chat entre vocês é liberado quando ele aceitar o desafio.',
       'Sim, tenho interesse',
     );
     if (!ok || !mounted) return;
@@ -351,16 +351,16 @@ class _AppShellState extends State<AppShell> {
     );
     if (s == null || !mounted) return;
     openChat(s.id);
-    notify('Interesse enviado! Combine os detalhes na conversa.');
+    notify('Solicitação enviada! Avisaremos quando o time aceitar.');
   }
 
   Future<void> _confirmarPartida(SolicitacaoConfronto s) async {
     final meuTime = app.time!;
     final adversario = s.adversario(meuTime.id);
     final ok = await _perguntar(
-      'Tudo combinado?',
-      'Confirme a partida de ${meuTime.nome} contra ${adversario.nome}, ${Formatos.dataCurta(s.anuncio.dataHoraInicio)} às ${Formatos.hora(s.anuncio.dataHoraInicio)}.',
-      'Confirmar partida',
+      'Aceitar o desafio?',
+      'A partida de ${meuTime.nome} contra ${adversario.nome}, ${Formatos.dataCurta(s.anuncio.dataHoraInicio)} às ${Formatos.hora(s.anuncio.dataHoraInicio)}, fica confirmada. O chat é liberado e as demais solicitações são encerradas.',
+      'Aceitar desafio',
     );
     if (!ok || !mounted) return;
     final atualizada = await _executar(
@@ -369,6 +369,7 @@ class _AppShellState extends State<AppShell> {
     if (atualizada == null || !mounted) return;
     if (atualizada.idPartida != null) {
       openPartida(atualizada.idPartida!);
+      notify('Desafio aceito! Partida confirmada e chat liberado.');
     } else {
       notify('Confirmação registrada. Aguardando o outro time confirmar.');
       _recarregar();

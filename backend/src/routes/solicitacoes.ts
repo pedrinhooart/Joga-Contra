@@ -4,7 +4,12 @@ import { meuTime, requireAuth } from '../middlewares/auth.js';
 import { ApiError } from '../middlewares/error-handler.js';
 import { mensagemSchema, solicitacaoSchema } from '../schemas/api.js';
 import { id, paginacao } from '../schemas/common.js';
-import { listarSolicitacoes, obterSolicitacao, participacaoNaSolicitacao } from '../services/consultas.js';
+import {
+  exigirChatLiberado,
+  listarSolicitacoes,
+  obterSolicitacao,
+  participacaoNaSolicitacao,
+} from '../services/consultas.js';
 import { consultar, criarNotificacao, emTransacao, limiteSql, uuid } from '../services/helpers.js';
 import { mapearMensagem } from '../services/mapeadores.js';
 
@@ -74,15 +79,29 @@ solicitacoesRouter.post('/', async (req, res) => {
 });
 
 /**
- * Registra a concordância do time. Quando os dois lados concordam, o procedimento
- * cria a partida, encerra o anúncio e as demais solicitações e notifica os
- * capitães, numa transação com bloqueio do anúncio.
+ * Aceite do desafio: só o capitão do time anunciante. O pedido do desafiante já
+ * é a concordância dele; o aceite registra os dois lados e o procedimento cria a
+ * partida, encerra o anúncio e as demais solicitações, notifica os capitães e
+ * libera o chat — tudo numa transação com bloqueio do anúncio.
  * Procedimentos abrem a própria transação: são chamados fora de `emTransacao`.
  */
 solicitacoesRouter.patch('/:idSolicitacao/confirmar', async (req, res) => {
   const idSolicitacao = id.parse(req.params.idSolicitacao);
   const idTime = meuTime(req);
-  await participacaoNaSolicitacao(pool, idSolicitacao, idTime);
+  const participacao = await participacaoNaSolicitacao(pool, idSolicitacao, idTime);
+  if (participacao.id_time_anunciante !== idTime) {
+    throw new ApiError(403, 'Somente o capitão do time anunciante aceita o desafio.', 'FORBIDDEN');
+  }
+  const [solicitante] = await consultar(
+    pool,
+    `SELECT s.data_confirmacao_solicitante, t.id_capitao
+       FROM solicitacoes_confronto s JOIN times t ON t.id_time = s.id_time_solicitante
+      WHERE s.id_solicitacao = ?`,
+    [idSolicitacao],
+  );
+  if (!solicitante.data_confirmacao_solicitante) {
+    await pool.execute('CALL proc_confirmar_solicitacao(?, ?)', [idSolicitacao, solicitante.id_capitao]);
+  }
   await pool.execute('CALL proc_confirmar_solicitacao(?, ?)', [idSolicitacao, req.auth!.idUsuario]);
   res.json({ data: await obterSolicitacao(pool, idSolicitacao, idTime) });
 });
@@ -113,7 +132,7 @@ solicitacoesRouter.patch('/:idSolicitacao/cancelar', async (req, res) => {
 solicitacoesRouter.get('/:idSolicitacao/mensagens', async (req, res) => {
   const idSolicitacao = id.parse(req.params.idSolicitacao);
   const idTime = meuTime(req);
-  await participacaoNaSolicitacao(pool, idSolicitacao, idTime);
+  await exigirChatLiberado(pool, idSolicitacao, idTime);
   await pool.execute(
     `UPDATE mensagens SET data_leitura = UTC_TIMESTAMP(3)
       WHERE id_solicitacao = ? AND id_time_remetente <> ? AND data_leitura IS NULL`,
@@ -131,7 +150,7 @@ solicitacoesRouter.post('/:idSolicitacao/mensagens', async (req, res) => {
   const idSolicitacao = id.parse(req.params.idSolicitacao);
   const { texto } = mensagemSchema.parse(req.body);
   const idTime = meuTime(req);
-  const participacao = await participacaoNaSolicitacao(pool, idSolicitacao, idTime);
+  const participacao = await exigirChatLiberado(pool, idSolicitacao, idTime);
   const idOutroTime =
     participacao.id_time_anunciante === idTime ? participacao.id_time_solicitante : participacao.id_time_anunciante;
   const [dados] = await consultar(

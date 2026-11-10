@@ -208,13 +208,6 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           children: [
             TagPill('${f.raioKm} km'),
             TagPill(
-              _nome(
-                refs.categoriasEtarias,
-                f.idCategoriaEtaria,
-                'Todas as categorias',
-              ),
-            ),
-            TagPill(
               _nome(refs.niveisTecnicos, f.idNivelTecnico, 'Todos os níveis'),
             ),
             if (dataTexto != null) TagPill(dataTexto),
@@ -275,7 +268,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   }
 
   void _showFilters(Referencias refs) {
-    int? draftCategoria = f.idCategoriaEtaria, draftNivel = f.idNivelTecnico;
+    int? draftNivel = f.idNivelTecnico;
     var draftRaio = f.raioKm;
     dataController.text = f.data == null ? '' : Formatos.dataNumerica(f.data!);
     cidadeController.text = f.cidade;
@@ -339,17 +332,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                     .toList(),
                 onChanged: (v) => update(() => draftRaio = v ?? 25),
               ),
-              const SizedBox(height: 10),
-              DropdownButtonFormField<int?>(
-                initialValue: draftCategoria,
-                decoration: const InputDecoration(labelText: 'Categoria'),
-                items: [
-                  const DropdownMenuItem(value: null, child: Text('Todas')),
-                  for (final c in refs.categoriasEtarias)
-                    DropdownMenuItem(value: c.id, child: Text(c.nome)),
-                ],
-                onChanged: (v) => update(() => draftCategoria = v),
-              ),
+              // Sem filtro de categoria: os anúncios novos não têm categoria.
               const SizedBox(height: 10),
               DropdownButtonFormField<int?>(
                 initialValue: draftNivel,
@@ -395,7 +378,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                       Navigator.pop(context);
                       _aplicar(
                         _com(
-                          categoria: () => draftCategoria,
+                          categoria: () => null,
                           nivel: () => draftNivel,
                           raio: draftRaio,
                           data: () => data,

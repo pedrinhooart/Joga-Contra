@@ -88,6 +88,7 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
     idMandoCampo: 1,
     quantidadeJogadores: 7,
     dataHoraInicio: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+    duracaoMinutos: 90,
     cidade: 'São Paulo',
     siglaEstado: 'SP',
     bairro: 'Vila Mariana',
@@ -304,6 +305,52 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
     expect(await visivel()).toBe(true);
   });
 
+  it('anúncio do formulário novo: sem categoria, quantidade, mando e bairro; com duração e local', async () => {
+    const dono = await novoCapitao('Anúncio Novo');
+    const leitor = await novoCapitao('Leitor Anúncio Novo');
+    const rival = await novoCapitao('Rival Anúncio Novo');
+    const marca = `Arena${randomUUID().slice(0, 8)}`;
+    const novo = {
+      idModalidade: QUADRA,
+      idNivelTecnico: INICIANTE,
+      dataHoraInicio: new Date(Date.now() + 9 * 86_400_000).toISOString(),
+      duracaoMinutos: 75,
+      cidade: 'Santos',
+      siglaEstado: 'SP',
+      nomeLocal: marca,
+      endereco: 'Avenida Senador Pinheiro Machado, 240 - Marapé',
+      latitude: -23.9596,
+      longitude: -46.3392,
+    };
+    const criado = await api(dono).post('/anuncios').send(novo);
+    expect(criado.status).toBe(201);
+    expect(criado.body.data).toMatchObject({
+      categoriaEtaria: null, quantidadeJogadores: null, mandoCampo: null, bairro: null,
+      duracaoMinutos: 75, endereco: novo.endereco, latitude: -23.9596, longitude: -46.3392,
+    });
+
+    // Continua na busca (LEFT JOIN) e sai com o filtro de categoria (só anúncios antigos têm).
+    const busca = (f = '') => api(leitor).get(`/anuncios?limite=100&texto=${marca}${f}`);
+    expect((await busca()).body.data.map((a: any) => a.duracaoMinutos)).toEqual([75]);
+    expect((await busca(`&idCategoriaEtaria=${LIVRE}`)).body.data).toEqual([]);
+
+    // Duração obrigatória e dentro dos limites; coordenadas sempre em par.
+    const { duracaoMinutos: _sem, ...semDuracao } = novo;
+    expect((await api(dono).post('/anuncios').send(semDuracao)).status).toBe(400);
+    expect((await api(dono).post('/anuncios').send({ ...novo, duracaoMinutos: 0 })).status).toBe(400);
+    expect((await api(dono).post('/anuncios').send({ ...novo, duracaoMinutos: 601 })).status).toBe(400);
+    expect((await api(dono).post('/anuncios').send({ ...novo, longitude: null })).status).toBe(400);
+
+    // A partida sai de um anúncio sem quantidade (coluna da partida aceita nulo).
+    const s = await solicitar(rival, criado.body.data.idAnuncio);
+    const { idPartida } = (await api(dono).patch(`/solicitacoes/${s.idSolicitacao}/confirmar`).expect(200)).body.data;
+    const [[copia]] = await pool.query('SELECT quantidade_jogadores FROM partidas WHERE id_partida = ?', [idPartida]);
+    expect(copia.quantidade_jogadores).toBeNull();
+    expect((await api(rival).get(`/partidas/${idPartida}`)).body.data).toMatchObject({
+      status: 'confirmada', nomeLocal: marca,
+    });
+  });
+
   it('rejeita anúncio sem nível técnico, com data passada ou com poucos jogadores', async () => {
     const c = await novoCapitao('Validações');
     expect((await api(c).post('/anuncios').send(dadosAnuncio({ idNivelTecnico: null }))).status).toBe(400);
@@ -431,14 +478,26 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
     const recebida = (await api(dono).get('/notificacoes')).body.data;
     expect(recebida.filter((n: any) => n.tipo === 'solicitacao_recebida')).toHaveLength(3);
 
-    // Mensagens e não lidas.
-    const m = await api(escolhido).post(`/solicitacoes/${s1.idSolicitacao}/mensagens`).send({ texto: 'Sábado às 16h?' });
-    expect(m.status).toBe(201);
-    expect((await api(dono).get(`/solicitacoes/${s1.idSolicitacao}`)).body.data).toMatchObject({
-      ultimaMensagem: 'Sábado às 16h?', mensagensNaoLidas: 1,
-    });
-    expect((await api(dono).get(`/solicitacoes/${s1.idSolicitacao}/mensagens`)).body.data).toHaveLength(1);
-    expect((await api(dono).get(`/solicitacoes/${s1.idSolicitacao}`)).body.data.mensagensNaoLidas).toBe(0);
+    // Chat 1 a 5: com a solicitação pendente, nem B (escolhido) nem A (dono)
+    // abrem, leem ou enviam mensagens.
+    const mensagens = `/solicitacoes/${s1.idSolicitacao}/mensagens`;
+    for (const capitao of [escolhido, dono]) {
+      const ler = await api(capitao).get(mensagens);
+      expect(ler.status).toBe(403);
+      expect(ler.body.error.code).toBe('CHAT_BLOQUEADO');
+      expect((await api(capitao).post(mensagens).send({ texto: 'Sábado às 16h?' })).status).toBe(403);
+      expect((await api(capitao).get(`/solicitacoes/${s1.idSolicitacao}`)).body.data).toMatchObject({
+        chatLiberado: false, ultimaMensagem: null, mensagensNaoLidas: 0,
+      });
+    }
+    // O banco também recusa, mesmo gravando direto (gatilho).
+    await expect(
+      pool.execute(
+        `INSERT INTO mensagens (id_mensagem, id_solicitacao, id_time_remetente, id_usuario_remetente, texto)
+         VALUES (?, ?, ?, ?, 'Direto no banco')`,
+        [randomUUID(), s1.idSolicitacao, escolhido.idTime, escolhido.idUsuario],
+      ),
+    ).rejects.toMatchObject({ code: 'ER_SIGNAL_EXCEPTION' });
 
     // 15. Permissões entre times.
     expect((await api(estranho).get(`/solicitacoes/${s1.idSolicitacao}`)).status).toBe(404);
@@ -452,17 +511,38 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
     expect((await api(escolhido).patch(`/solicitacoes/${s1.idSolicitacao}/recusar`)).status).toBe(403);
     expect((await api(dono).patch(`/solicitacoes/${s1.idSolicitacao}/cancelar`)).status).toBe(403);
 
-    // 9. Um lado só não cria partida.
-    const lado1 = await api(dono).patch(`/solicitacoes/${s1.idSolicitacao}/confirmar`);
-    expect(lado1.status).toBe(200);
-    expect(lado1.body.data).toMatchObject({ status: 'pendente', confirmadoAnunciante: true, confirmadoSolicitante: false, idPartida: null });
+    // 9. O desafiante não aceita a própria solicitação: só o dono do anúncio.
+    const indevido = await api(escolhido).patch(`/solicitacoes/${s1.idSolicitacao}/confirmar`);
+    expect(indevido.status).toBe(403);
+    expect((await api(escolhido).get(`/solicitacoes/${s1.idSolicitacao}`)).body.data.status).toBe('pendente');
 
-    // 10. Os dois lados concordam.
-    const lado2 = await api(escolhido).patch(`/solicitacoes/${s1.idSolicitacao}/confirmar`);
-    expect(lado2.status).toBe(200);
-    expect(lado2.body.data.status).toBe('confirmada');
-    const idPartida = lado2.body.data.idPartida;
+    // 10. Chat 6: o dono aceita; a partida é confirmada (o pedido já era a
+    // concordância do desafiante) e o chat é liberado.
+    const aceite = await api(dono).patch(`/solicitacoes/${s1.idSolicitacao}/confirmar`);
+    expect(aceite.status).toBe(200);
+    expect(aceite.body.data).toMatchObject({
+      status: 'confirmada', confirmadoAnunciante: true, confirmadoSolicitante: true, chatLiberado: true,
+    });
+    const idPartida = aceite.body.data.idPartida;
     expect(idPartida).toBeTruthy();
+
+    // Chat 7 e 8: os dois capitães trocam mensagens.
+    const m = await api(escolhido).post(mensagens).send({ texto: 'Sábado às 16h?' });
+    expect(m.status).toBe(201);
+    expect((await api(dono).get(`/solicitacoes/${s1.idSolicitacao}`)).body.data).toMatchObject({
+      chatLiberado: true, ultimaMensagem: 'Sábado às 16h?', mensagensNaoLidas: 1,
+    });
+    expect((await api(dono).get(mensagens)).body.data).toHaveLength(1);
+    expect((await api(dono).get(`/solicitacoes/${s1.idSolicitacao}`)).body.data.mensagensNaoLidas).toBe(0);
+    expect((await api(dono).post(mensagens).send({ texto: 'Fechado!' })).status).toBe(201);
+    expect((await api(escolhido).get(mensagens)).body.data.map((x: any) => x.texto)).toEqual(['Sábado às 16h?', 'Fechado!']);
+
+    // Chat 9 e 10: terceiro time e times com solicitação (agora encerrada) não acessam.
+    for (const capitao of [estranho, perdedor1]) {
+      expect((await api(capitao).get(mensagens)).status).toBe(404);
+      expect((await api(capitao).post(mensagens).send({ texto: 'Oi' })).status).toBe(404);
+    }
+    expect((await api(perdedor1).get(`/solicitacoes/${s2.idSolicitacao}/mensagens`)).status).toBe(403);
 
     const partida = (await api(dono).get(`/partidas/${idPartida}`)).body.data;
     expect(partida).toMatchObject({ status: 'confirmada', nomeLocal: 'Campo de Teste', modalidade: { codigo: 'society' } });
@@ -501,7 +581,7 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
     expect(tardia.body.error.message).toContain('não está disponível');
 
     // 14. Sem confirmação duplicada.
-    expect((await api(perdedor1).patch(`/solicitacoes/${s2.idSolicitacao}/confirmar`)).status).toBe(409);
+    expect((await api(perdedor1).patch(`/solicitacoes/${s2.idSolicitacao}/confirmar`)).status).toBe(403);
     expect((await api(dono).patch(`/solicitacoes/${s2.idSolicitacao}/confirmar`)).status).toBe(409);
     expect((await api(dono).patch(`/solicitacoes/${s1.idSolicitacao}/confirmar`)).status).toBe(409);
     const [partidas] = await pool.query('SELECT id_partida FROM partidas WHERE id_anuncio = ?', [anuncio.idAnuncio]);
@@ -518,7 +598,13 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
     expect(cancelada.body.data.status).toBe('cancelada');
     expect((await api(dono).get('/notificacoes')).body.data.map((n: any) => n.tipo)).toContain('partida_cancelada');
     expect((await api(dono).get(`/anuncios/${anuncio.idAnuncio}`)).body.data.status).toBe('encerrado');
-  });
+
+    // Chat 11: regra existente no cancelamento — a solicitação continua
+    // confirmada, então a conversa segue só entre os dois capitães.
+    expect((await api(dono).get(mensagens)).status).toBe(200);
+    expect((await api(escolhido).post(mensagens).send({ texto: 'Remarcamos?' })).status).toBe(201);
+    expect((await api(estranho).get(mensagens)).status).toBe(404);
+  }, 30_000); // muitas chamadas (bcrypt no cadastro de 5 capitães)
 
   it('14. confirmações simultâneas de solicitações diferentes geram uma só partida', async () => {
     const dono = await novoCapitao('Concorrência');
@@ -528,8 +614,6 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
       const anuncio = await publicar(dono);
       const sa = await solicitar(a, anuncio.idAnuncio);
       const sb = await solicitar(b, anuncio.idAnuncio);
-      await api(a).patch(`/solicitacoes/${sa.idSolicitacao}/confirmar`).expect(200);
-      await api(b).patch(`/solicitacoes/${sb.idSolicitacao}/confirmar`).expect(200);
 
       const respostas = await Promise.all([
         api(dono).patch(`/solicitacoes/${sa.idSolicitacao}/confirmar`),
@@ -582,8 +666,8 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
     const vencido = await publicar(dono, { dataHoraInicio: emBreve() });
     const s = await solicitar(rival, jogo.idAnuncio);
     const pendente = await solicitar(rival, vencido.idAnuncio);
-    await api(dono).patch(`/solicitacoes/${s.idSolicitacao}/confirmar`).expect(200);
-    const { idPartida } = (await api(rival).patch(`/solicitacoes/${s.idSolicitacao}/confirmar`).expect(200)).body.data;
+    // O aceite do dono confirma a partida.
+    const { idPartida } = (await api(dono).patch(`/solicitacoes/${s.idSolicitacao}/confirmar`).expect(200)).body.data;
 
     const notas = [1, 2, 3, 4].map((idCriterio) => ({ idCriterio, nota: 5 }));
     expect((await api(dono).post(`/partidas/${idPartida}/avaliacoes`).send({ notas })).status).toBe(409);

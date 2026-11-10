@@ -51,6 +51,13 @@ abstract final class Formatos {
     return '${_dois(l.day)}/${_dois(l.month)}/${l.year}';
   }
 
+  /// 90 → "1 h 30 min"; 45 → "45 min"; 120 → "2 h".
+  static String duracao(int minutos) {
+    final h = minutos ~/ 60, m = minutos % 60;
+    if (h == 0) return '$m min';
+    return m == 0 ? '$h h' : '$h h $m min';
+  }
+
   /// "16:00"
   static String hora(DateTime d) {
     final l = d.toLocal();

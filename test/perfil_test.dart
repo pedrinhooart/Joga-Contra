@@ -53,6 +53,7 @@ Future<AppState> _abrirPerfil(
             solicitacoes: demo.solicitacoes,
             partidas: demo.partidas,
             notificacoes: demo.notificacoes,
+            locais: demo.locais,
           )
         : demo,
   );

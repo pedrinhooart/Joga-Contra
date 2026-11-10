@@ -1,6 +1,7 @@
 import 'dart:convert';
 import '../../core/formatters.dart';
 import '../../models/anuncio_partida.dart';
+import '../../models/local_esportivo.dart';
 import '../../models/notificacao.dart';
 import '../../models/partida.dart';
 import '../../models/referencia.dart';
@@ -25,6 +26,7 @@ Repositorios criarRepositoriosDemo({DateTime? agora}) {
     solicitacoes: _DemoSolicitacoes(db),
     partidas: _DemoPartidas(db),
     notificacoes: _DemoNotificacoes(db),
+    locais: const _DemoLocais(),
   );
 }
 
@@ -361,9 +363,6 @@ class DemoBanco {
       timeAnunciante: meuTime.resumo,
       status: StatusSolicitacao.pendente,
       dataSolicitacao: agora.subtract(const Duration(days: 1, hours: 2)),
-      ultimaMensagem: 'Olá! Nossa quadra está disponível domingo.',
-      dataUltimaMensagem: agora.subtract(const Duration(days: 1)),
-      mensagensNaoLidas: 2,
     );
     final enviada = SolicitacaoConfronto(
       id: 's-real',
@@ -372,9 +371,6 @@ class DemoBanco {
       timeAnunciante: real,
       status: StatusSolicitacao.pendente,
       dataSolicitacao: agora.subtract(const Duration(hours: 3)),
-      ultimaMensagem: 'Vocês conseguem jogar sábado às 16h?',
-      dataUltimaMensagem: agora.subtract(const Duration(minutes: 20)),
-      mensagensNaoLidas: 2,
     );
     final confirmadaAntiga = SolicitacaoConfronto(
       id: 's-real-antiga',
@@ -382,6 +378,7 @@ class DemoBanco {
       timeSolicitante: real,
       timeAnunciante: meuTime.resumo,
       status: StatusSolicitacao.confirmada,
+      chatLiberado: true,
       dataSolicitacao: agora.subtract(const Duration(days: 4)),
       confirmadoAnunciante: true,
       confirmadoSolicitante: true,
@@ -674,7 +671,7 @@ class _DemoAnuncios implements AnuncioRepository {
         .where(
           (a) =>
               f.idCategoriaEtaria == null ||
-              a.categoriaEtaria.id == f.idCategoriaEtaria,
+              a.categoriaEtaria?.id == f.idCategoriaEtaria,
         )
         .where(
           (a) =>
@@ -794,6 +791,7 @@ class _DemoSolicitacoes implements SolicitacaoRepository {
     ultimaMensagem: ultimaMensagem ?? s.ultimaMensagem,
     dataUltimaMensagem: dataUltima ?? s.dataUltimaMensagem,
     mensagensNaoLidas: naoLidas ?? s.mensagensNaoLidas,
+    chatLiberado: (status ?? s.status) == StatusSolicitacao.confirmada,
   );
 
   @override
@@ -857,7 +855,13 @@ class _DemoSolicitacoes implements SolicitacaoRepository {
     if (!s.status.emAberto) {
       throw StateError('Esta solicitação não está mais em aberto.');
     }
-    // Demonstração: simula que o capitão adversário também concordou.
+    // Mesma regra da API: só o time anunciante aceita; o pedido já é a
+    // concordância do desafiante.
+    if (s.timeAnunciante.id != db.meuTime.id) {
+      throw StateError(
+        'Somente o capitão do time anunciante aceita o desafio.',
+      );
+    }
     s = _com(s, confAnunciante: true, confSolicitante: true);
     final partida = Partida(
       id: db.novoId('p'),
@@ -911,9 +915,18 @@ class _DemoSolicitacoes implements SolicitacaoRepository {
     );
   }
 
+  void _exigirChat(int i) {
+    if (db.solicitacoes[i].status != StatusSolicitacao.confirmada) {
+      throw StateError(
+        'O chat é liberado quando o time anunciante aceita o desafio.',
+      );
+    }
+  }
+
   @override
   Future<List<Mensagem>> mensagens(String id) async {
     final i = _indice(id);
+    _exigirChat(i);
     db.solicitacoes[i] = _com(db.solicitacoes[i], naoLidas: 0);
     return List.of(db.mensagens[id] ?? const []);
   }
@@ -921,6 +934,7 @@ class _DemoSolicitacoes implements SolicitacaoRepository {
   @override
   Future<Mensagem> enviarMensagem(String id, String texto) async {
     final i = _indice(id);
+    _exigirChat(i);
     final m = Mensagem(
       id: db.novoId('m'),
       idSolicitacao: id,
@@ -1024,4 +1038,12 @@ class _DemoNotificacoes implements NotificacaoRepository {
   Future<List<Notificacao>> listar() async => List.of(db.notificacoes);
   @override
   Future<void> marcarComoLida(String id) async {}
+}
+
+/// Demonstração: sem fonte real de locais, não sugere nada (nunca inventa).
+class _DemoLocais implements LocalRepository {
+  const _DemoLocais();
+  @override
+  Future<LocaisDaCidade> daCidade(String siglaEstado, String cidade) async =>
+      const LocaisDaCidade([]);
 }

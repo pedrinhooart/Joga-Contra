@@ -42,44 +42,66 @@ void main() {
     expect(find.text('Futebol de quadra'), findsWidgets);
   });
 
-  testWidgets('interesse vira conversa e a confirmação cria a partida', (
-    tester,
-  ) async {
-    await _abrirApp(tester);
-    await tester.tap(find.text('Buscar').last);
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.text('Ver detalhes').first,
-      280,
-      scrollable: _listaVertical,
-    );
-    // Textos maiores: garante o botão inteiro acima da barra de navegação.
-    await tester.ensureVisible(find.text('Ver detalhes').first);
-    await tester.pumpAndSettle();
-    final y = tester.getCenter(find.text('Ver detalhes').first).dy;
-    await tester.drag(_listaVertical, Offset(0, 420 - y));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Ver detalhes').first);
-    await tester.pumpAndSettle();
-    await tester.drag(find.byType(ListView).first, const Offset(0, -600));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Tenho interesse'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Sim, tenho interesse'));
-    await tester.pumpAndSettle();
-    expect(find.text('Quase tudo pronto!'), findsOneWidget);
+  testWidgets(
+    'interesse fica em análise; o aceite do dono confirma e libera o chat',
+    (tester) async {
+      await _abrirApp(tester);
+      await tester.tap(find.text('Buscar').last);
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Ver detalhes').first,
+        280,
+        scrollable: _listaVertical,
+      );
+      // Textos maiores: garante o botão inteiro acima da barra de navegação.
+      await tester.ensureVisible(find.text('Ver detalhes').first);
+      await tester.pumpAndSettle();
+      final y = tester.getCenter(find.text('Ver detalhes').first).dy;
+      await tester.drag(_listaVertical, Offset(0, 420 - y));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ver detalhes').first);
+      await tester.pumpAndSettle();
+      await tester.drag(find.byType(ListView).first, const Offset(0, -600));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Tenho interesse'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Sim, tenho interesse'));
+      await tester.pumpAndSettle();
+      // Pedido enviado: sem chat até o dono do anúncio aceitar.
+      expect(find.text('Quase tudo pronto!'), findsOneWidget);
+      expect(find.text('Aguardando o aceite'), findsOneWidget);
+      expect(find.byIcon(Icons.send), findsNothing);
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
 
-    // Espera o snackbar "Interesse enviado!" sumir para não cobrir o botão.
-    await tester.pump(const Duration(seconds: 4));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Confirmar partida'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Confirmar partida'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Confirmar partida'));
-    await tester.pumpAndSettle();
-    expect(find.text('Partida confirmada!'), findsOneWidget);
-  });
+      // Como dono de anúncio: abre a solicitação recebida e aceita.
+      await tester.tap(find.text('Conversas').last);
+      await tester.pumpAndSettle();
+      expect(find.text('Aguardando aceite'), findsWidgets);
+      await tester.tap(find.text('Vila Nova Futsal').first);
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.send), findsNothing);
+      await tester.ensureVisible(find.text('Aceitar desafio'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Aceitar desafio'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Aceitar desafio'));
+      await tester.pumpAndSettle();
+      expect(find.text('Partida confirmada!'), findsOneWidget);
+
+      // Chat liberado depois do aceite.
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Conversar'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Conversar'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).first, 'Fechado!');
+      await tester.tap(find.byIcon(Icons.send));
+      await tester.pumpAndSettle();
+      expect(find.text('Fechado!'), findsOneWidget);
+    },
+  );
 
   testWidgets('aplicar filtros com o teclado aberto não quebra a tela', (
     tester,

@@ -57,6 +57,7 @@ Future<AnuncioPartida> _publicar(_Capitao c, {DateTime? quando}) async {
       idMandoCampo: refs.mandosCampo.first.id,
       quantidadeJogadores: 7,
       dataHoraInicio: quando ?? DateTime.now().add(const Duration(days: 5)),
+      duracaoMinutos: 90,
       cidade: 'São Paulo',
       siglaEstado: 'SP',
       bairro: 'Vila Mariana',
@@ -211,6 +212,30 @@ void main() {
       expect(s1.status, StatusSolicitacao.pendente);
       expect(s1.adversario(escolhido.idTime).id, dono.idTime);
 
+      // Antes do aceite não há chat: a API recusa ler e enviar.
+      expect(s1.chatLiberado, isFalse);
+      await expectLater(
+        escolhido.repos.solicitacoes.enviarMensagem(s1.id, 'Bora jogar?'),
+        throwsA(isA<ApiException>().having((e) => e.statusCode, 'status', 403)),
+      );
+      await expectLater(
+        dono.repos.solicitacoes.mensagens(s1.id),
+        throwsA(isA<ApiException>()),
+      );
+
+      final meus = await dono.repos.anuncios.listarDoMeuTime();
+      expect(meus.single.totalSolicitacoes, 2);
+
+      // Só o dono aceita; o aceite confirma a partida e libera o chat.
+      await expectLater(
+        escolhido.repos.solicitacoes.confirmar(s1.id),
+        throwsA(isA<ApiException>()),
+      );
+      final aceita = await dono.repos.solicitacoes.confirmar(s1.id);
+      expect(aceita.status, StatusSolicitacao.confirmada);
+      expect(aceita.chatLiberado, isTrue);
+      expect(aceita.idPartida, isNotNull);
+
       final mensagem = await escolhido.repos.solicitacoes.enviarMensagem(
         s1.id,
         'Bora jogar?',
@@ -221,16 +246,7 @@ void main() {
       expect(conversa.ultimaMensagem, 'Bora jogar?');
       expect(conversa.mensagensNaoLidas, 1);
       expect(await dono.repos.solicitacoes.mensagens(s1.id), hasLength(1));
-
-      final meus = await dono.repos.anuncios.listarDoMeuTime();
-      expect(meus.single.totalSolicitacoes, 2);
-
-      final lado1 = await dono.repos.solicitacoes.confirmar(s1.id);
-      expect(lado1.euConfirmei(dono.idTime), isTrue);
-      expect(lado1.idPartida, isNull);
-      final lado2 = await escolhido.repos.solicitacoes.confirmar(s1.id);
-      expect(lado2.status, StatusSolicitacao.confirmada);
-      expect(lado2.idPartida, isNotNull);
+      final lado2 = aceita;
 
       final partida = await dono.repos.partidas.obter(lado2.idPartida!);
       expect(partida.status, StatusPartida.confirmada);

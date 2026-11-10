@@ -153,7 +153,11 @@ class _AnuncioPainel extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      '${ad.modalidade.nome} · ${ad.categoriaEtaria.nome} · ${ad.localExibicao}',
+                      [
+                        ad.modalidade.nome,
+                        ?ad.categoriaEtaria?.nome,
+                        ad.localExibicao,
+                      ].join(' · '),
                       style: const TextStyle(
                         fontSize: 10,
                         color: AppColors.muted,

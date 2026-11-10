@@ -201,6 +201,7 @@ END$$
 
 CREATE TRIGGER gat_mensagens_antes_inserir
 BEFORE INSERT ON mensagens FOR EACH ROW
+-- O chat só existe depois que o time anunciante aceita a solicitação.
 BEGIN
   IF NOT EXISTS (
        SELECT 1 FROM solicitacoes_confronto s
@@ -208,8 +209,8 @@ BEGIN
        WHERE s.id_solicitacao = NEW.id_solicitacao
          AND NEW.id_time_remetente IN (s.id_time_anunciante, s.id_time_solicitante)
          AND t.id_capitao = NEW.id_usuario_remetente
-         AND s.status IN ('pendente', 'confirmada')) THEN
-    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Somente os capitães da solicitação em andamento podem enviar mensagens.';
+         AND s.status = 'confirmada') THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'O chat é liberado quando o time anunciante aceita o desafio.';
   END IF;
   IF NEW.data_leitura IS NOT NULL THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Uma mensagem nova não pode estar lida.';
