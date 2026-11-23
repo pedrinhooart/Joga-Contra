@@ -74,7 +74,7 @@ class Partida {
     modalidade: ItemReferencia.fromJson(
       json['modalidade'] as Map<String, dynamic>,
     ),
-    dataHoraInicio: DateTime.parse(json['dataHoraInicio'] as String).toLocal(),
+    dataHoraInicio: horarioDaPartida(json),
     nomeLocal: json['nomeLocal'] as String,
     endereco: json['endereco'] as String?,
     cidade: json['cidade'] as String,

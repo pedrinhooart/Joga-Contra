@@ -51,8 +51,13 @@ abstract interface class AnuncioRepository {
 }
 
 abstract interface class SolicitacaoRepository {
-  /// Enviadas e recebidas pelo meu time.
-  Future<List<SolicitacaoConfronto>> listarDoMeuTime();
+  /// Enviadas e recebidas pelo meu time; [papel] filtra na API ("Meus
+  /// desafios" = solicitante).
+  Future<List<SolicitacaoConfronto>> listarDoMeuTime({PapelSolicitacao? papel});
+
+  /// Sincronização leve: registra a entrega das mensagens recebidas e devolve
+  /// quantas ainda não foram lidas.
+  Future<int> sincronizar();
   Future<SolicitacaoConfronto> obter(String idSolicitacao);
   Future<SolicitacaoConfronto> solicitar(String idAnuncio, {String? mensagem});
 

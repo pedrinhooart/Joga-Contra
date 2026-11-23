@@ -22,7 +22,7 @@ Banco novo, em português, criado a partir de [docs/AUDITORIA_DADOS_DINAMICOS.md
 
 | Ordem | Arquivo | Conteúdo | Pode repetir? |
 |---|---|---|---|
-| 1 | [01_esquema.sql](01_esquema.sql) | Banco, 17 tabelas, PKs, 35 FKs, UNIQUEs, 65 CHECKs, índices | Não: falha se as tabelas já existirem (proteção contra sobrescrita) |
+| 1 | [01_esquema.sql](01_esquema.sql) | Banco, 17 tabelas, PKs, 35 FKs, UNIQUEs, 66 CHECKs, índices | Não: falha se as tabelas já existirem (proteção contra sobrescrita) |
 | 2 | [02_rotinas.sql](02_rotinas.sql) | 15 gatilhos e 7 procedimentos transacionais; evento opcional comentado | Não (falha se já existirem) |
 | 3 | [03_dados_referencia.sql](03_dados_referencia.sql) | Estados, modalidades, categorias, níveis, mandos, critérios | **Sim** (idempotente) |
 | 4 | [04_visoes.sql](04_visoes.sql) | 4 visões com os dados calculados para a API | Não (falha se já existirem) |
@@ -30,6 +30,8 @@ Banco novo, em português, criado a partir de [docs/AUDITORIA_DADOS_DINAMICOS.md
 | 6 | [06_testes_regras.sql](06_testes_regras.sql) | 59 testes automáticos das regras. **Somente em banco de teste** | Sim (limpa o que cria) |
 | 7 | [07_cadastro_simplificado.sql](07_cadastro_simplificado.sql) | Migração: categoria e quantidade de jogadores do time ficam opcionais (`vis_perfis_times` com `LEFT JOIN`). **Só para bancos criados antes**: 01 e 04 já trazem o resultado. Aplicada no `joga_contra_v2` em 10/11/2026 | Sim (idempotente) |
 | 8 | [08_anuncio_simplificado.sql](08_anuncio_simplificado.sql) | Migração: anúncio sem categoria e quantidade obrigatórias, coluna `duracao_minutos`, busca com `LEFT JOIN` e chat só após o aceite (gatilho de mensagens). **Só para bancos criados antes**: 01, 02 e 04 já trazem o resultado. Aplicada no `joga_contra_v2` em 10/11/2026 | Não (ADD COLUMN) |
+| 9 | [09_modalidades.sql](09_modalidades.sql) | Modalidades: Society/Futebol Sintético, Futsal (antes "Futebol de quadra"), Futebol de Campo e Futebol de Campo Reduzido. Só cadastro de referência; anúncios antigos mantêm o id. Aplicada no `joga_contra_v2` em 23/11/2026 | Sim (idempotente) |
+| 10 | [10_mensagens_entrega.sql](10_mensagens_entrega.sql) | Migração: coluna `mensagens.data_entrega` (estados do chat: enviada, entregue, visualizada) e gatilho de mensagens recriado para aceitar a entrega uma única vez. Não altera mensagens existentes. **Só para bancos criados antes**: 01 e 02 já trazem o resultado. Aplicada no `joga_contra_v2` em 23/11/2026 | Não (ADD COLUMN) |
 
 Nenhum script contém `DROP DATABASE` ou `DROP TABLE`. O 06 remove apenas os registros e os procedimentos auxiliares `teste_*` que ele mesmo criou.
 
@@ -187,7 +189,8 @@ As tabelas `modalidades`, `categorias_etarias`, `niveis_tecnicos`, `mandos_campo
 | `id_usuario_remetente` | uuid | S | FK `usuarios`. Precisa ser o capitão do time remetente |
 | `texto` | VARCHAR(1000) | S | Não pode ser vazio. Imutável |
 | `data_envio` | data | S | |
-| `data_leitura` | data | N | Lida pelo outro capitão (pode ser registrada uma única vez) |
+| `data_entrega` | data | N | O app do outro capitão recebeu a mensagem (✓✓ "entregue"). Registrada uma única vez, nunca pelo remetente |
+| `data_leitura` | data | N | O outro capitão abriu a conversa (✓✓ "visualizada"). Registrada uma única vez, nunca pelo remetente |
 
 ### 3.9 `partidas`
 

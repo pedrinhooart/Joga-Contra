@@ -92,3 +92,13 @@ double? numeroOuNulo(Object? v) => switch (v) {
   String s => double.tryParse(s),
   _ => null,
 };
+
+/// Horário da partida como as pessoas devem vê-lo: o local de onde ela
+/// acontece (`dataHoraLocal`, calculado pela API com o fuso da UF), sem
+/// conversão pelo fuso do aparelho. Respostas antigas sem esse campo caem no
+/// instante UTC convertido para o aparelho.
+DateTime horarioDaPartida(Map<String, dynamic> json) {
+  final local = json['dataHoraLocal'];
+  if (local is String && local.isNotEmpty) return DateTime.parse(local);
+  return DateTime.parse(json['dataHoraInicio'] as String).toLocal();
+}

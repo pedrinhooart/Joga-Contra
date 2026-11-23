@@ -52,6 +52,11 @@ abstract final class Formatos {
   }
 
   /// 90 → "1 h 30 min"; 45 → "45 min"; 120 → "2 h".
+
+  /// Horário de parede, sem fuso: "2026-11-26T21:00:00".
+  static String dataHoraLocal(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${_dois(d.month)}-${_dois(d.day)}'
+      'T${_dois(d.hour)}:${_dois(d.minute)}:00';
   static String duracao(int minutos) {
     final h = minutos ~/ 60, m = minutos % 60;
     if (h == 0) return '$m min';

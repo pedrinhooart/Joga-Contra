@@ -40,6 +40,20 @@ Future<void> _esperarTexto(WidgetTester tester, Finder alvo) async {
   expect(alvo, findsWidgets);
 }
 
+/// Como [_esperarTexto], rolando a lista (preguiçosa) até o alvo ser montado.
+Future<void> _esperarRolando(WidgetTester tester, Finder alvo) async {
+  for (var i = 0; i < 60 && alvo.evaluate().isEmpty; i++) {
+    final listas = find.byWidgetPredicate(
+      (w) => w is Scrollable && w.axisDirection == AxisDirection.down,
+    );
+    if (listas.evaluate().isNotEmpty) {
+      await tester.drag(listas.first, const Offset(0, -150));
+    }
+    await _aguardar(tester, 1);
+  }
+  expect(alvo, findsWidgets);
+}
+
 Future<(String, String)> _capitaoComAnuncio(String marca) async {
   final repos = criarRepositoriosApi(
     ApiClient(baseUrl: _url),
@@ -144,7 +158,7 @@ void main() {
       await _aguardar(tester);
       await tester.enterText(find.byType(TextField).first, 'Arena $marca');
       await tester.pump(const Duration(milliseconds: 450));
-      await _esperarTexto(tester, find.text(nomeDono));
+      await _esperarRolando(tester, find.text(nomeDono));
       expect(find.text('1 jogos disponíveis · Qualquer data'), findsOneWidget);
 
       await tester.ensureVisible(find.text('Ver detalhes').first);
@@ -217,7 +231,7 @@ void main() {
       await _esperarTexto(tester, find.text('Bora jogar?'));
 
       await tester.tap(find.text('Início').last);
-      await _esperarTexto(tester, find.text('Próxima partida'));
+      await _esperarRolando(tester, find.text('Próxima partida'));
       // Fontes maiores: o cartão da partida fica mais abaixo na lista.
       await tester.scrollUntilVisible(
         find.text('Ver partida'),

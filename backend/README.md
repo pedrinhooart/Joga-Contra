@@ -20,6 +20,8 @@ O `.env` é ignorado pelo Git. Variáveis: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_
 
 - Sucesso: `{ "data": ..., "meta": { "pagina", "limite" } }`. Erro: `{ "error": { "code", "message" } }`.
 - JSON em camelCase português (`idAnuncio`, `dataHoraInicio`). Datas em ISO 8601 UTC.
+- **Horário das partidas:** é o horário local de onde a partida acontece (fuso da UF do anúncio, `services/fuso.ts`), nunca o do aparelho. O app envia `dataHoraLocal` (`2026-11-26T21:00`) e a API grava o instante UTC; as respostas de anúncio e partida trazem `dataHoraInicio` (UTC), `dataHoraLocal` (para exibir) e `fusoHorario`. Os filtros `data` e `horario` da busca usam o horário local de cada anúncio.
+- Textos recebidos são normalizados para NFC (acentos compostos).
 - Rotas protegidas: `Authorization: Bearer <token>`. O time usado é sempre o do capitão logado, nunca um valor enviado pelo cliente.
 - Regras do banco (gatilhos e procedimentos) voltam como HTTP 409 com a mensagem em português.
 - Quem não participa de uma solicitação ou partida recebe 404.
@@ -45,11 +47,13 @@ O `.env` é ignorado pelo Git. Variáveis: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_
 | PUT `/anuncios/:id`, PATCH `/anuncios/:id/status`, DELETE `/anuncios/:id` | capitão dono | Editar, pausar/reativar, excluir (lógica) |
 | GET `/anuncios/:id/solicitacoes` | capitão dono | Analisa quem solicitou |
 | POST `/solicitacoes` | capitão | "Tenho interesse"; repetir devolve a pendente existente |
-| GET `/solicitacoes/minhas`, `/solicitacoes/:id` | participante | |
+| GET `/solicitacoes/minhas?papel=` | participante | Conversas do meu time. `papel=solicitante`: só os desafios que o meu time enviou (Meus Desafios); `papel=anunciante`: só os recebidos. Marca como entregues as mensagens recebidas |
+| GET `/solicitacoes/sincronizar` | JWT | Chamado pelo app a cada 30 s e ao voltar ao app: marca como entregues as mensagens recebidas nas conversas liberadas e devolve `{ mensagensNaoLidas }` |
+| GET `/solicitacoes/:id` | participante | |
 | PATCH `/solicitacoes/:id/confirmar` | anunciante | **Aceite do desafio.** O pedido já é a concordância do desafiante; o aceite confirma a partida, encerra o anúncio e as demais solicitações, notifica e libera o chat. O desafiante recebe 403 |
 | PATCH `/solicitacoes/:id/recusar` | anunciante | |
 | PATCH `/solicitacoes/:id/cancelar` | solicitante | |
-| GET, POST `/solicitacoes/:id/mensagens` | participante, após o aceite | Chat entre os capitães. Antes do aceite: 403 `CHAT_BLOQUEADO` (o gatilho do banco também recusa). Quem não participa: 404. GET marca como lidas |
+| GET, POST `/solicitacoes/:id/mensagens` | participante, após o aceite | Chat entre os capitães. Antes do aceite: 403 `CHAT_BLOQUEADO` (o gatilho do banco também recusa). Quem não participa: 404. GET marca as recebidas como visualizadas. Cada mensagem traz `status` (`enviada`, `entregue`, `visualizada`), `dataEntrega` e `dataLeitura`; o remetente nunca marca as próprias |
 | GET `/partidas/minhas`, `/partidas/proxima`, `/partidas/:id` | participante | |
 | PATCH `/partidas/:id/cancelar` | participante | |
 | POST `/partidas/:id/avaliacoes` | participante | Só em partida realizada; todos os critérios ativos |

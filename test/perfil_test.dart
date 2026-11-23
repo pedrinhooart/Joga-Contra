@@ -167,7 +167,8 @@ void main() {
 
   testWidgets('descrição: salvar, cancelar e remover', (tester) async {
     final state = await _abrirPerfil(tester);
-    const nova = 'Time de amigos desde 2010. Jogo limpo e pontualidade.';
+    const nova =
+        'Somos uma equipe de amigos apaixonados por futebol, união e competição saudável.';
 
     await tester.tap(find.byTooltip('Editar descrição'));
     await tester.pumpAndSettle();

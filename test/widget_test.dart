@@ -22,12 +22,20 @@ Finder get _listaVertical => find
     )
     .first;
 
+/// Rola a lista (preguiçosa) até [alvo] ser montado.
+Future<void> _rolarAte(WidgetTester tester, Finder alvo) async {
+  for (var i = 0; i < 20 && alvo.evaluate().isEmpty; i++) {
+    await tester.drag(_listaVertical, const Offset(0, -150));
+    await tester.pumpAndSettle();
+  }
+}
+
 void main() {
   testWidgets('abre o início com dados da sessão e navega para a busca', (
     tester,
   ) async {
     await _abrirApp(tester);
-    expect(find.text('Seu time entra em campo. ⚽'), findsOneWidget);
+    expect(find.text('Seu time entra em campo.'), findsOneWidget);
     expect(find.text('BOM TE VER, JOÃO'), findsOneWidget);
     expect(
       find.text('Encontre o próximo adversário para o União FC.'),
@@ -37,9 +45,10 @@ void main() {
     await tester.tap(find.text('Buscar').last);
     await tester.pumpAndSettle();
     expect(find.text('Tem jogo esperando pelo seu time.'), findsOneWidget);
+    await _rolarAte(tester, find.text('Real Amigos FC'));
     expect(find.text('Real Amigos FC'), findsWidgets);
     // Modalidades vêm dos cadastros de referência, não de listas fixas.
-    expect(find.text('Futebol de quadra'), findsWidgets);
+    expect(find.text('Futsal'), findsWidgets);
   });
 
   testWidgets(
@@ -48,11 +57,7 @@ void main() {
       await _abrirApp(tester);
       await tester.tap(find.text('Buscar').last);
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('Ver detalhes').first,
-        280,
-        scrollable: _listaVertical,
-      );
+      await _rolarAte(tester, find.text('Ver detalhes'));
       // Textos maiores: garante o botão inteiro acima da barra de navegação.
       await tester.ensureVisible(find.text('Ver detalhes').first);
       await tester.pumpAndSettle();

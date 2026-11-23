@@ -220,7 +220,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Preenche o resto e publica: vai com endereço e coordenadas.
-    await _escolherNoMenu(tester, 'Modalidade', 'Futebol de quadra');
+    await _escolherNoMenu(tester, 'Modalidade', 'Futsal');
     await _escolherNoMenu(tester, 'Nível do time', 'Avançado');
     await tester.tap(find.widgetWithText(TextFormField, 'Data'));
     await tester.pumpAndSettle();

@@ -63,3 +63,13 @@ export const criarNotificacao = (db: Executor, n: NovaNotificacao) =>
      VALUES (?, ?, ?, ?, ?, ?)`,
     [uuid(), n.idDestinatario, n.tipo, n.titulo, n.mensagem.slice(0, 500), n.idSolicitacao],
   );
+
+/** Todas as strings de um corpo JSON em NFC (acentos compostos), recursivamente. */
+export function normalizarTextos(valor: unknown): unknown {
+  if (typeof valor === 'string') return valor.normalize('NFC');
+  if (Array.isArray(valor)) return valor.map(normalizarTextos);
+  if (valor && typeof valor === 'object' && Object.getPrototypeOf(valor) === Object.prototype) {
+    return Object.fromEntries(Object.entries(valor).map(([k, v]) => [k, normalizarTextos(v)]));
+  }
+  return valor;
+}

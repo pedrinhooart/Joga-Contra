@@ -76,7 +76,7 @@ void main() {
       });
       expect(recebida.headers['Authorization'], 'Bearer abc');
       expect(lista.single.time.nome, 'Vila Nova Futsal');
-      expect(lista.single.modalidade.codigo, 'quadra');
+      expect(lista.single.modalidade.codigo, 'futsal');
       expect(lista.single.valorAluguelPorTime, 120.5);
     });
 
@@ -118,6 +118,79 @@ void main() {
     });
   });
 
+  group('Horário local da partida (cenário Arena Biase)', () {
+    Map<String, dynamic> anuncioJson() => {
+      'idAnuncio': 'a1',
+      'time': {'idTime': 't1', 'nome': 'Vilson Prato Feito'},
+      'modalidade': {'id': 1, 'codigo': 'society', 'nome': 'Society'},
+      // 21:00 em Cascavel (PR) = 00:00 UTC do dia seguinte.
+      'dataHoraInicio': '2026-11-27T00:00:00.000Z',
+      'dataHoraLocal': '2026-11-26T21:00:00',
+      'cidade': 'Cascavel',
+      'siglaEstado': 'PR',
+      'nomeLocal': 'Arena Biase',
+    };
+
+    test('qualquer aparelho mostra 21:00, sem converter pelo fuso dele', () {
+      final a = AnuncioPartida.fromJson(anuncioJson());
+      expect(Formatos.hora(a.dataHoraInicio), '21:00');
+      expect(Formatos.dataNumerica(a.dataHoraInicio), '26/11/2026');
+      // A exibição segue o horário local da partida, não o instante convertido
+      // pelo fuso do aparelho (que daria outra hora num aparelho em UTC, -4...).
+      final outroFuso = AnuncioPartida.fromJson({
+        ...anuncioJson(),
+        'dataHoraInicio': '2026-11-26T09:00:00.000Z',
+      });
+      expect(Formatos.hora(outroFuso.dataHoraInicio), '21:00');
+      expect(outroFuso.dataHoraInicio.isUtc, isFalse);
+    });
+
+    test('o app envia a hora local; a API converte pelo fuso da UF', () {
+      final json = RascunhoAnuncio(
+        idModalidade: 1,
+        idNivelTecnico: 1,
+        dataHoraInicio: DateTime(2026, 11, 26, 21),
+        duracaoMinutos: 60,
+        cidade: 'Cascavel',
+        siglaEstado: 'PR',
+        nomeLocal: 'Arena Biase',
+      ).toJson();
+      expect(json['dataHoraLocal'], '2026-11-26T21:00:00');
+      expect(json.containsKey('dataHoraInicio'), isFalse);
+    });
+  });
+
+  group('Acentos', () {
+    test('o corpo enviado à API é UTF-8 e volta intacto', () async {
+      late http.Request enviada;
+      const frase =
+          'Somos uma equipe de amigos apaixonados por futebol, união e competição saudável.';
+      final api = ApiClient(
+        baseUrl: 'http://api.teste/api',
+        client: MockClient((req) async {
+          enviada = req;
+          return http.Response.bytes(
+            utf8.encode(jsonEncode({'data': jsonDecode(req.body)})),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        }),
+      );
+      final volta = await api.patch('/times/t1', {
+        'nome': 'Time Taboão da Serra',
+        'descricao': frase,
+      });
+      expect(
+        enviada.bodyBytes,
+        utf8.encode(
+          jsonEncode({'nome': 'Time Taboão da Serra', 'descricao': frase}),
+        ),
+      );
+      expect(volta['nome'], 'Time Taboão da Serra');
+      expect(volta['descricao'], frase);
+    });
+  });
+
   group('Formatos', () {
     test('datas, horas e moeda em pt-BR', () {
       final d = DateTime(2026, 7, 18, 16, 5);
@@ -154,7 +227,7 @@ const _anuncioJson = {
     'cidade': 'São Paulo',
     'siglaEstado': 'SP',
   },
-  'modalidade': {'id': 2, 'codigo': 'quadra', 'nome': 'Futebol de quadra'},
+  'modalidade': {'id': 2, 'codigo': 'futsal', 'nome': 'Futsal'},
   'categoriaEtaria': {'id': 4, 'codigo': 'livre', 'nome': 'Livre'},
   'nivelTecnico': {'id': 2, 'codigo': 'intermediario', 'nome': 'Intermediário'},
   'quantidadeJogadores': 5,

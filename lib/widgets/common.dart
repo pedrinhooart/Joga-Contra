@@ -179,7 +179,7 @@ class Crest extends StatelessWidget {
       if (!small && ano != null)
         Text(
           '$ano',
-          style: const TextStyle(fontSize: 7, color: AppColors.muted),
+          style: const TextStyle(fontSize: 8, color: AppColors.muted),
         ),
     ],
   );
@@ -274,6 +274,67 @@ class TagPill extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Opção de filtro em forma de pílula. A selecionada fica verde-escura com
+/// texto branco e um ✓ verde-limão; o texto quebra a linha em vez de cortar.
+class ChipFiltro extends StatelessWidget {
+  const ChipFiltro(
+    this.texto, {
+    super.key,
+    required this.selecionado,
+    required this.onTap,
+  });
+  final String texto;
+  final bool selecionado;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    selected: selecionado,
+    child: Material(
+      color: selecionado ? AppColors.forest : Colors.white,
+      shape: StadiumBorder(
+        side: BorderSide(
+          color: selecionado ? AppColors.forest : AppColors.border,
+          width: 1.2,
+        ),
+      ),
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: onTap,
+        child: ConstrainedBox(
+          // Área de toque confortável (Material: 48 dp; aqui 40 + espaçamento).
+          constraints: const BoxConstraints(minHeight: 40),
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(selecionado ? 10 : 14, 8, 14, 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (selecionado) ...[
+                  const Icon(Icons.check, size: 16, color: AppColors.lime),
+                  const SizedBox(width: 5),
+                ],
+                Flexible(
+                  child: Text(
+                    texto,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: selecionado
+                          ? FontWeight.w800
+                          : FontWeight.w600,
+                      color: selecionado ? Colors.white : AppColors.ink,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class ActionButton extends StatelessWidget {

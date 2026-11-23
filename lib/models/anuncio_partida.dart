@@ -1,3 +1,4 @@
+import '../core/formatters.dart';
 import 'referencia.dart';
 import 'time.dart';
 
@@ -109,7 +110,7 @@ class AnuncioPartida {
     nivelTecnico: itemOuNulo(json['nivelTecnico']),
     mandoCampo: itemOuNulo(json['mandoCampo']),
     quantidadeJogadores: (json['quantidadeJogadores'] as num?)?.toInt(),
-    dataHoraInicio: DateTime.parse(json['dataHoraInicio'] as String).toLocal(),
+    dataHoraInicio: horarioDaPartida(json),
     duracaoMinutos: (json['duracaoMinutos'] as num?)?.toInt(),
     cidade: json['cidade'] as String,
     siglaEstado: json['siglaEstado'] as String,
@@ -167,7 +168,8 @@ class RascunhoAnuncio {
   Map<String, dynamic> toJson() => {
     'idModalidade': idModalidade,
     'idNivelTecnico': idNivelTecnico,
-    'dataHoraInicio': dataHoraInicio.toUtc().toIso8601String(),
+    // Horário local da partida; a API converte pelo fuso da UF do anúncio.
+    'dataHoraLocal': Formatos.dataHoraLocal(dataHoraInicio),
     'duracaoMinutos': duracaoMinutos,
     'cidade': cidade,
     'siglaEstado': siglaEstado,
@@ -192,7 +194,6 @@ class FiltroAnuncios {
     this.idCategoriaEtaria,
     this.idNivelTecnico,
     this.data,
-    this.raioKm,
     this.siglaEstado,
     this.cidade,
     this.horario,
@@ -200,7 +201,6 @@ class FiltroAnuncios {
   final String? texto;
   final int? idModalidade, idCategoriaEtaria, idNivelTecnico;
   final DateTime? data;
-  final int? raioKm;
   final String? siglaEstado, cidade;
 
   /// Partidas a partir deste horário (HH:mm), no fuso do aparelho.
@@ -214,12 +214,10 @@ class FiltroAnuncios {
     'data': data == null
         ? null
         : '${data!.year}-${data!.month.toString().padLeft(2, '0')}-${data!.day.toString().padLeft(2, '0')}',
-    'raioKm': raioKm,
     'siglaEstado': siglaEstado,
     'cidade': cidade,
+    // Data e horário são os locais da partida (UF do anúncio), não os do
+    // aparelho: a API compara com o horário local de cada anúncio.
     'horario': horario,
-    // Data e horário são os do aparelho; o banco guarda UTC.
-    if (data != null || horario != null)
-      'fusoMinutos': (data ?? DateTime.now()).timeZoneOffset.inMinutes,
   };
 }

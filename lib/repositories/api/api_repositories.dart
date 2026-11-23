@@ -152,12 +152,21 @@ class ApiAnuncioRepository implements AnuncioRepository {
 class ApiSolicitacaoRepository implements SolicitacaoRepository {
   ApiSolicitacaoRepository(this._api);
   final ApiClient _api;
+  @override
+  Future<int> sincronizar() async =>
+      ((await _api.get('/solicitacoes/sincronizar')
+                  as _Json)['mensagensNaoLidas']
+              as num)
+          .toInt();
+
   SolicitacaoConfronto _s(Object? d) =>
       SolicitacaoConfronto.fromJson(d as _Json);
 
   @override
-  Future<List<SolicitacaoConfronto>> listarDoMeuTime() async => _lista(
-    await _api.get('/solicitacoes/minhas'),
+  Future<List<SolicitacaoConfronto>> listarDoMeuTime({
+    PapelSolicitacao? papel,
+  }) async => _lista(
+    await _api.get('/solicitacoes/minhas', query: {'papel': papel?.name}),
     SolicitacaoConfronto.fromJson,
   );
   @override

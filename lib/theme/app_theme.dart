@@ -28,6 +28,20 @@ class AppTheme {
       elevation: 0,
       centerTitle: false,
     ),
+    // Rótulos da barra inferior numa linha só ("Meus Jogos", "Conversas"),
+    // mesmo em telas de 360 dp com a escala de leitura.
+    navigationBarTheme: NavigationBarThemeData(
+      labelTextStyle: WidgetStateProperty.resolveWith(
+        (estados) => TextStyle(
+          fontSize: 10.5,
+          letterSpacing: 0,
+          fontWeight: estados.contains(WidgetState.selected)
+              ? FontWeight.w700
+              : FontWeight.w500,
+          color: AppColors.ink,
+        ),
+      ),
+    ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: Colors.white,

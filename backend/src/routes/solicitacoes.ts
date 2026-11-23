@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { Router } from 'express';
 import { pool } from '../config/db.js';
 import { meuTime, requireAuth } from '../middlewares/auth.js';
@@ -6,6 +7,7 @@ import { mensagemSchema, solicitacaoSchema } from '../schemas/api.js';
 import { id, paginacao } from '../schemas/common.js';
 import {
   exigirChatLiberado,
+  marcarEntregues,
   listarSolicitacoes,
   obterSolicitacao,
   participacaoNaSolicitacao,
@@ -16,18 +18,44 @@ import { mapearMensagem } from '../services/mapeadores.js';
 export const solicitacoesRouter = Router();
 solicitacoesRouter.use(requireAuth);
 
+const papelSchema = z.enum(['anunciante', 'solicitante']).optional();
+
 solicitacoesRouter.get('/minhas', async (req, res) => {
   const { pagina, limite } = paginacao.parse(req.query);
+  const papel = papelSchema.parse(req.query.papel);
+  const idTime = meuTime(req);
+  // Listar as conversas no app = mensagens recebidas chegaram ao aparelho.
+  await marcarEntregues(pool, idTime);
   res.json({
-    data: await listarSolicitacoes(pool, meuTime(req), limiteSql(pagina, limite)),
+    data: await listarSolicitacoes(pool, idTime, limiteSql(pagina, limite), papel),
     meta: { pagina, limite },
   });
+});
+
+/**
+ * Sincronização leve do app (a cada poucos segundos enquanto está aberto):
+ * registra a entrega das mensagens recebidas e devolve quantas faltam ler.
+ */
+solicitacoesRouter.get('/sincronizar', async (req, res) => {
+  const idTime = meuTime(req);
+  await marcarEntregues(pool, idTime);
+  const [linha] = await consultar(
+    pool,
+    `SELECT COUNT(*) AS total
+       FROM mensagens m
+       JOIN solicitacoes_confronto s ON s.id_solicitacao = m.id_solicitacao
+      WHERE m.data_leitura IS NULL AND m.id_time_remetente <> ? AND s.status = 'confirmada'
+        AND (s.id_time_anunciante = ? OR s.id_time_solicitante = ?)`,
+    [idTime, idTime, idTime],
+  );
+  res.json({ data: { mensagensNaoLidas: Number(linha.total) } });
 });
 
 solicitacoesRouter.get('/:idSolicitacao', async (req, res) => {
   const idSolicitacao = id.parse(req.params.idSolicitacao);
   const idTime = meuTime(req);
-  await participacaoNaSolicitacao(pool, idSolicitacao, idTime);
+  const participacao = await participacaoNaSolicitacao(pool, idSolicitacao, idTime);
+  if (participacao.status === 'confirmada') await marcarEntregues(pool, idTime, idSolicitacao);
   res.json({ data: await obterSolicitacao(pool, idSolicitacao, idTime) });
 });
 
@@ -134,7 +162,9 @@ solicitacoesRouter.get('/:idSolicitacao/mensagens', async (req, res) => {
   const idTime = meuTime(req);
   await exigirChatLiberado(pool, idSolicitacao, idTime);
   await pool.execute(
-    `UPDATE mensagens SET data_leitura = UTC_TIMESTAMP(3)
+    // Abrir a conversa = visualizar (e, se ainda não constava, receber) as mensagens do outro.
+    `UPDATE mensagens
+        SET data_leitura = UTC_TIMESTAMP(3), data_entrega = COALESCE(data_entrega, UTC_TIMESTAMP(3))
       WHERE id_solicitacao = ? AND id_time_remetente <> ? AND data_leitura IS NULL`,
     [idSolicitacao, idTime],
   );

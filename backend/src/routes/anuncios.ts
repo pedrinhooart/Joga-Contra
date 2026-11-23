@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { pool } from '../config/db.js';
 import { meuTime, requireAuth } from '../middlewares/auth.js';
-import { anuncioSchema, filtroAnunciosSchema, statusAnuncioSchema } from '../schemas/api.js';
+import { anuncioComInicioSchema, filtroAnunciosSchema, statusAnuncioSchema } from '../schemas/api.js';
+import { sqlHorarioLocal } from '../services/fuso.js';
 import { id } from '../schemas/common.js';
 import {
   listarSolicitacoesDoAnuncio,
@@ -15,8 +16,6 @@ import { mapearAnuncio } from '../services/mapeadores.js';
 export const anunciosRouter = Router();
 anunciosRouter.use(requireAuth);
 
-const MINUTO_MS = 60_000;
-const DIA_MS = 24 * 60 * MINUTO_MS;
 
 /**
  * Busca de adversários: somente anúncios disponíveis de outros times.
@@ -42,19 +41,11 @@ anunciosRouter.get('/', async (req, res) => {
   if (f.idModalidade) filtrar('a.id_modalidade = ?', f.idModalidade);
   if (f.idCategoriaEtaria) filtrar('a.id_categoria_etaria = ?', f.idCategoriaEtaria);
   if (f.idNivelTecnico) filtrar('a.id_nivel_tecnico = ?', f.idNivelTecnico);
-  if (f.data) {
-    // O dia é o do aparelho; o banco guarda UTC.
-    const inicio = new Date(`${f.data}T00:00:00.000Z`).getTime() - f.fusoMinutos * MINUTO_MS;
-    filtrar(
-      'a.data_hora_inicio >= ? AND a.data_hora_inicio < ?',
-      dataSql(new Date(inicio)),
-      dataSql(new Date(inicio + DIA_MS)),
-    );
-  }
-  if (f.horario) {
-    // fusoMinutos é um inteiro validado pelo zod.
-    filtrar(`TIME(a.data_hora_inicio + INTERVAL ${Math.trunc(f.fusoMinutos)} MINUTE) >= ?`, `${f.horario}:00`);
-  }
+  // Data e horário são os locais da partida (UF do anúncio), como o capitão vê,
+  // e não os do aparelho de quem busca.
+  const inicioLocal = sqlHorarioLocal('a.data_hora_inicio', 'a.sigla_estado');
+  if (f.data) filtrar(`DATE(${inicioLocal}) = ?`, f.data);
+  if (f.horario) filtrar(`TIME(${inicioLocal}) >= ?`, `${f.horario}:00`);
 
   const linhas = await consultar(
     pool,
@@ -90,7 +81,7 @@ anunciosRouter.get('/:idAnuncio/solicitacoes', async (req, res) => {
   res.json({ data: await listarSolicitacoesDoAnuncio(pool, idAnuncio, idTime) });
 });
 
-const valoresAnuncio = (a: ReturnType<typeof anuncioSchema.parse>) => [
+const valoresAnuncio = (a: ReturnType<typeof anuncioComInicioSchema.parse>) => [
   a.idModalidade, a.idCategoriaEtaria, a.idNivelTecnico, a.idMandoCampo, a.quantidadeJogadores,
   dataSql(a.dataHoraInicio), a.duracaoMinutos, a.cidade, a.siglaEstado, a.bairro, a.nomeLocal, a.endereco,
   a.latitude, a.longitude,
@@ -99,7 +90,7 @@ const valoresAnuncio = (a: ReturnType<typeof anuncioSchema.parse>) => [
 
 // O anúncio sempre pertence ao time do capitão logado.
 anunciosRouter.post('/', async (req, res) => {
-  const dados = anuncioSchema.parse(req.body);
+  const dados = anuncioComInicioSchema.parse(req.body);
   const idAnuncio = uuid();
   await pool.execute(
     `INSERT INTO anuncios_partidas (
@@ -115,7 +106,7 @@ anunciosRouter.post('/', async (req, res) => {
 
 anunciosRouter.put('/:idAnuncio', async (req, res) => {
   const idAnuncio = id.parse(req.params.idAnuncio);
-  const dados = anuncioSchema.parse(req.body);
+  const dados = anuncioComInicioSchema.parse(req.body);
   await obterAnuncioProprio(pool, idAnuncio, meuTime(req));
   await pool.execute(
     `UPDATE anuncios_partidas

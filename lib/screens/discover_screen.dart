@@ -16,14 +16,12 @@ class FiltrosBusca {
     this.idModalidade,
     this.idCategoriaEtaria,
     this.idNivelTecnico,
-    this.raioKm = 25,
     this.data,
     this.cidade = '',
     this.horario = '',
   });
   final String texto, cidade, horario;
   final int? idModalidade, idCategoriaEtaria, idNivelTecnico;
-  final int raioKm;
   final DateTime? data;
 
   FiltroAnuncios get consulta => FiltroAnuncios(
@@ -31,7 +29,6 @@ class FiltrosBusca {
     idModalidade: idModalidade,
     idCategoriaEtaria: idCategoriaEtaria,
     idNivelTecnico: idNivelTecnico,
-    raioKm: raioKm,
     data: data,
     cidade: cidade.isEmpty ? null : cidade,
     horario: horario.isEmpty ? null : horario,
@@ -56,7 +53,6 @@ class DiscoverScreen extends StatefulWidget {
 }
 
 class _DiscoverScreenState extends State<DiscoverScreen> {
-  static const _raios = [5, 10, 25, 50, 100];
   late FiltrosBusca f = widget.filtros;
   late final texto = TextEditingController(text: f.texto);
   // Vivem com a tela: a folha de filtros ainda os usa durante a animação de fechar.
@@ -110,7 +106,6 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     int? Function()? modalidade,
     int? Function()? categoria,
     int? Function()? nivel,
-    int? raio,
     DateTime? Function()? data,
     String? cidade,
     String? horario,
@@ -121,7 +116,6 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     idModalidade: modalidade != null ? modalidade() : f.idModalidade,
     idCategoriaEtaria: categoria != null ? categoria() : f.idCategoriaEtaria,
     idNivelTecnico: nivel != null ? nivel() : f.idNivelTecnico,
-    raioKm: raio ?? f.raioKm,
     data: data != null ? data() : f.data,
   );
 
@@ -149,56 +143,50 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
             hintMaxLines: 2,
           ),
         ),
-        const SizedBox(height: 11),
-        Row(
+        const SizedBox(height: 14),
+        const _Rotulo('TIPO DE JOGO'),
+        const SizedBox(height: 6),
+        // Todas as opções à vista, quebrando a linha quando preciso: nenhum
+        // nome fica cortado nem escondido atrás da rolagem.
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
-            Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    for (final (id, nome) in [
-                      (null, 'Todos'),
-                      for (final m in refs.modalidades) (m.id, m.nome),
-                    ])
-                      Padding(
-                        padding: const EdgeInsets.only(right: 7),
-                        child: ChoiceChip(
-                          label: Text(nome),
-                          selected: f.idModalidade == id,
-                          onSelected: (_) =>
-                              _aplicar(_com(modalidade: () => id)),
-                        ),
-                      ),
-                  ],
-                ),
+            for (final (id, nome) in [
+              (null, 'Todos'),
+              for (final m in refs.modalidades) (m.id, m.nome),
+            ])
+              ChipFiltro(
+                nome,
+                selecionado: f.idModalidade == id,
+                onTap: () => _aplicar(_com(modalidade: () => id)),
               ),
-            ),
-            OutlinedButton.icon(
-              onPressed: widget.onMap,
-              icon: const Icon(Icons.map_outlined, size: 16),
-              label: const Text('Mapa'),
-            ),
           ],
         ),
-        const SizedBox(height: 8),
-        Row(
+        const SizedBox(height: 12),
+        // Com fonte grande (acessibilidade), os botões descem para a linha de
+        // baixo em vez de transbordar.
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          runSpacing: 8,
           children: [
-            const Expanded(
-              child: Text(
-                'FILTROS',
-                style: TextStyle(
-                  fontSize: 9,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.muted,
-                  letterSpacing: 1,
+            const _Rotulo('FILTROS'),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () => _showFilters(refs),
+                  icon: const Icon(Icons.tune, size: 16),
+                  label: const Text('Filtros'),
                 ),
-              ),
-            ),
-            OutlinedButton.icon(
-              onPressed: () => _showFilters(refs),
-              icon: const Icon(Icons.tune, size: 16),
-              label: const Text('Filtros'),
+                OutlinedButton.icon(
+                  onPressed: widget.onMap,
+                  icon: const Icon(Icons.map_outlined, size: 16),
+                  label: const Text('Mapa'),
+                ),
+              ],
             ),
           ],
         ),
@@ -206,7 +194,6 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         Wrap(
           spacing: 7,
           children: [
-            TagPill('${f.raioKm} km'),
             TagPill(
               _nome(refs.niveisTecnicos, f.idNivelTecnico, 'Todos os níveis'),
             ),
@@ -245,7 +232,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                 if (results.isEmpty)
                   EmptyState(
                     title: 'Nenhum rival por aqui. Ainda.',
-                    message: 'Amplie a distância ou tente outros filtros.',
+                    message: 'Tente outro tipo de jogo, data ou cidade.',
                     action: TextButton(
                       onPressed: _clear,
                       child: const Text('Limpar filtros'),
@@ -269,7 +256,6 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
   void _showFilters(Referencias refs) {
     int? draftNivel = f.idNivelTecnico;
-    var draftRaio = f.raioKm;
     dataController.text = f.data == null ? '' : Formatos.dataNumerica(f.data!);
     cidadeController.text = f.cidade;
     horarioController.text = f.horario;
@@ -319,19 +305,6 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                 ),
                 controller: cidadeController,
               ),
-              const SizedBox(height: 10),
-              DropdownButtonFormField<int>(
-                initialValue: draftRaio,
-                decoration: const InputDecoration(
-                  labelText: 'Raio de distância',
-                ),
-                items: _raios
-                    .map(
-                      (v) => DropdownMenuItem(value: v, child: Text('$v km')),
-                    )
-                    .toList(),
-                onChanged: (v) => update(() => draftRaio = v ?? 25),
-              ),
               // Sem filtro de categoria: os anúncios novos não têm categoria.
               const SizedBox(height: 10),
               DropdownButtonFormField<int?>(
@@ -345,51 +318,57 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                 onChanged: (v) => update(() => draftNivel = v),
               ),
               const SizedBox(height: 14),
-              Row(
-                children: [
-                  TextButton(
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _aplicar(
-                        _com(
-                          categoria: () => null,
-                          nivel: () => null,
-                          raio: 25,
-                          data: () => null,
-                          cidade: '',
-                          horario: '',
-                        ),
-                      );
-                    },
-                    child: const Text('Limpar filtros'),
-                  ),
-                  const Spacer(),
-                  FilledButton(
-                    onPressed: () {
-                      final data = Formatos.lerDataHora(
-                        dataController.text,
-                        '00:00',
-                      );
-                      final horario = horarioController.text.trim();
-                      // Horário inválido é ignorado, como a data.
-                      final horarioValido =
-                          Formatos.lerDataHora('01/01/2000', horario) != null;
-                      final cidade = cidadeController.text.trim();
-                      Navigator.pop(context);
-                      _aplicar(
-                        _com(
-                          categoria: () => null,
-                          nivel: () => draftNivel,
-                          raio: draftRaio,
-                          data: () => data,
-                          cidade: cidade,
-                          horario: horarioValido ? horario.padLeft(5, '0') : '',
-                        ),
-                      );
-                    },
-                    child: const Text('Aplicar filtros'),
-                  ),
-                ],
+              // Fonte grande: "Aplicar" desce para a linha de baixo, sem transbordar.
+              SizedBox(
+                width: double.infinity,
+                child: Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  runSpacing: 8,
+                  children: [
+                    TextButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _aplicar(
+                          _com(
+                            categoria: () => null,
+                            nivel: () => null,
+                            data: () => null,
+                            cidade: '',
+                            horario: '',
+                          ),
+                        );
+                      },
+                      child: const Text('Limpar filtros'),
+                    ),
+                    FilledButton(
+                      onPressed: () {
+                        final data = Formatos.lerDataHora(
+                          dataController.text,
+                          '00:00',
+                        );
+                        final horario = horarioController.text.trim();
+                        // Horário inválido é ignorado, como a data.
+                        final horarioValido =
+                            Formatos.lerDataHora('01/01/2000', horario) != null;
+                        final cidade = cidadeController.text.trim();
+                        Navigator.pop(context);
+                        _aplicar(
+                          _com(
+                            categoria: () => null,
+                            nivel: () => draftNivel,
+                            data: () => data,
+                            cidade: cidade,
+                            horario: horarioValido
+                                ? horario.padLeft(5, '0')
+                                : '',
+                          ),
+                        );
+                      },
+                      child: const Text('Aplicar filtros'),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -402,4 +381,21 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     texto.clear();
     _aplicar(const FiltrosBusca());
   }
+}
+
+/// Título de seção da busca ("TIPO DE JOGO", "FILTROS").
+class _Rotulo extends StatelessWidget {
+  const _Rotulo(this.texto);
+  final String texto;
+
+  @override
+  Widget build(BuildContext context) => Text(
+    texto,
+    style: const TextStyle(
+      fontSize: 9,
+      fontWeight: FontWeight.w800,
+      color: AppColors.muted,
+      letterSpacing: 1,
+    ),
+  );
 }

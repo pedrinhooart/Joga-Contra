@@ -326,6 +326,7 @@ CREATE TABLE mensagens (
   id_usuario_remetente CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   texto                VARCHAR(1000) NOT NULL,
   data_envio           DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  data_entrega         DATETIME(3) NULL COMMENT 'Recebida pelo app do capitão do outro time.',
   data_leitura         DATETIME(3) NULL COMMENT 'Lida pelo capitão do outro time.',
   PRIMARY KEY (id_mensagem),
   CONSTRAINT ce_mensagens_solicitacoes_confronto FOREIGN KEY (id_solicitacao) REFERENCES solicitacoes_confronto (id_solicitacao),
@@ -333,6 +334,7 @@ CREATE TABLE mensagens (
   CONSTRAINT ce_mensagens_usuarios FOREIGN KEY (id_usuario_remetente) REFERENCES usuarios (id_usuario),
   CONSTRAINT vr_mensagens_id CHECK (REGEXP_LIKE(id_mensagem, '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', 'c')),
   CONSTRAINT vr_mensagens_texto CHECK (CHAR_LENGTH(TRIM(texto)) > 0),
+  CONSTRAINT vr_mensagens_entrega CHECK (data_entrega IS NULL OR data_entrega >= data_envio),
   CONSTRAINT vr_mensagens_leitura CHECK (data_leitura IS NULL OR data_leitura >= data_envio),
   INDEX ind_mensagens_conversa (id_solicitacao, data_envio),
   INDEX ind_mensagens_nao_lidas (id_solicitacao, id_time_remetente, data_leitura)

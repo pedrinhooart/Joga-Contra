@@ -1,3 +1,4 @@
+import { fusoDaUf, horarioLocal } from './fuso.js';
 import { dataIso, type Linha } from './helpers.js';
 
 /** Converte linhas do banco (snake_case) no JSON lido pelos modelos do Flutter. */
@@ -74,6 +75,9 @@ export const mapearAnuncio = (r: Linha) => ({
   mandoCampo: referencia(r.id_mando_campo, r.codigo_mando_campo, r.nome_mando_campo, r.ordem_mando_campo),
   quantidadeJogadores: r.quantidade_jogadores,
   dataHoraInicio: dataIso(r.data_hora_inicio),
+  // Horário local da partida (UF), igual para todos, em qualquer fuso de aparelho.
+  dataHoraLocal: horarioLocal(r.data_hora_inicio, r.sigla_estado),
+  fusoHorario: fusoDaUf(r.sigla_estado),
   duracaoMinutos: r.duracao_minutos ?? null,
   cidade: r.cidade,
   siglaEstado: r.sigla_estado,
@@ -94,6 +98,10 @@ export const mapearMensagem = (r: Linha) => ({
   idTimeRemetente: r.id_time_remetente,
   texto: r.texto,
   dataEnvio: dataIso(r.data_envio),
+  dataEntrega: dataIso(r.data_entrega),
+  dataLeitura: dataIso(r.data_leitura),
+  // Como no WhatsApp: entregue = chegou ao app do outro capitão; visualizada = ele abriu a conversa.
+  status: r.data_leitura ? 'visualizada' : r.data_entrega ? 'entregue' : 'enviada',
 });
 
 export const mapearNotificacao = (r: Linha) => ({

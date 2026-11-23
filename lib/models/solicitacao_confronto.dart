@@ -1,4 +1,5 @@
 import 'anuncio_partida.dart';
+import 'referencia.dart';
 import 'time.dart';
 
 enum StatusSolicitacao {
@@ -103,6 +104,24 @@ class SolicitacaoConfronto {
       );
 }
 
+/// Estado de uma mensagem para quem a enviou (como no WhatsApp).
+enum StatusMensagem {
+  /// Registrada no servidor.
+  enviada('enviada', 'Enviada'),
+
+  /// Chegou ao app do outro capitão (ele ainda não abriu a conversa).
+  entregue('entregue', 'Entregue'),
+
+  /// O outro capitão abriu a conversa.
+  visualizada('visualizada', 'Visualizada');
+
+  const StatusMensagem(this.codigo, this.rotulo);
+  final String codigo, rotulo;
+
+  static StatusMensagem deCodigo(String? c) =>
+      values.firstWhere((s) => s.codigo == c, orElse: () => enviada);
+}
+
 /// Mensagem trocada entre os capitães dentro de uma solicitação.
 class Mensagem {
   const Mensagem({
@@ -111,9 +130,16 @@ class Mensagem {
     required this.idTimeRemetente,
     required this.texto,
     required this.dataEnvio,
+    this.dataEntrega,
+    this.dataLeitura,
+    this.status = StatusMensagem.enviada,
   });
   final String id, idSolicitacao, idTimeRemetente, texto;
   final DateTime dataEnvio;
+  final DateTime? dataEntrega, dataLeitura;
+
+  /// Calculado e persistido pela API (datas de entrega e de leitura).
+  final StatusMensagem status;
 
   factory Mensagem.fromJson(Map<String, dynamic> json) => Mensagem(
     id: json['idMensagem'] as String,
@@ -121,5 +147,11 @@ class Mensagem {
     idTimeRemetente: json['idTimeRemetente'] as String,
     texto: json['texto'] as String,
     dataEnvio: DateTime.parse(json['dataEnvio'] as String).toLocal(),
+    dataEntrega: dataOuNula(json['dataEntrega']),
+    dataLeitura: dataOuNula(json['dataLeitura']),
+    status: StatusMensagem.deCodigo(json['status'] as String?),
   );
 }
+
+/// Papel do meu time numa solicitação: dono do anúncio ou desafiante.
+enum PapelSolicitacao { anunciante, solicitante }

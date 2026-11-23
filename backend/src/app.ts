@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { env } from './config/env.js';
 import { errorHandler, notFound } from './middlewares/error-handler.js';
 import { anunciosRouter } from './routes/anuncios.js';
+import { normalizarTextos } from './services/helpers.js';
 import { armazenamento } from './services/armazenamento.js';
 import { authRouter } from './routes/auth.js';
 import { healthRouter } from './routes/health.js';
@@ -33,6 +34,12 @@ export function createApp() {
   app.use(helmet());
   app.use(cors({ origin: origens }));
   app.use(express.json({ limit: '100kb' }));
+  // Acentos sempre na forma composta (NFC): alguns teclados mandam "ã" como
+  // "a" + til separado, o que quebraria buscas, comparações e siglas.
+  app.use((req, _res, next) => {
+    req.body = normalizarTextos(req.body);
+    next();
+  });
 
   if (env.NODE_ENV !== 'test') {
     const limitar = (limit: number, skipSuccessfulRequests = false) =>

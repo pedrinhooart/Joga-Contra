@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { utcDeHorarioLocal } from '../services/fuso.js';
 import { id, idReferencia, paginacao, siglaEstado, textoOpcional } from './common.js';
 
 const email = z.string().trim().toLowerCase().email().max(254);
@@ -57,7 +58,17 @@ export const anuncioSchema = z
     idNivelTecnico: idReferencia,
     idMandoCampo: idReferencia.nullish().transform((v) => v ?? null),
     quantidadeJogadores: z.number().int().min(5).max(30).nullish().transform((v) => v ?? null),
-    dataHoraInicio: z.string().datetime({ offset: true }).transform((v) => new Date(v)),
+    // Horário local da partida, na UF do anúncio ("2026-11-26T21:00"): é o que o
+    // app envia. Instante com fuso explícito continua aceito (clientes antigos).
+    dataHoraLocal: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/)
+      .optional(),
+    dataHoraInicio: z
+      .string()
+      .datetime({ offset: true })
+      .transform((v) => new Date(v))
+      .optional(),
     duracaoMinutos: z.number().int().min(15).max(600),
     cidade: z.string().trim().min(1).max(100),
     siglaEstado,
@@ -69,10 +80,24 @@ export const anuncioSchema = z
     valorAluguelPorTime: z.number().min(0).max(99999999).nullish().transform((v) => v ?? null),
     descricao: textoOpcional(1000),
   })
+  .refine((a) => a.dataHoraLocal !== undefined || a.dataHoraInicio !== undefined, {
+    message: 'Informe a data e o horário da partida.',
+    path: ['dataHoraLocal'],
+  })
   .refine((a) => (a.latitude === null) === (a.longitude === null), {
     message: 'Informe latitude e longitude juntas.',
     path: ['latitude'],
   });
+
+/** Anúncio validado, com o instante UTC calculado pelo fuso da UF do anúncio. */
+export const anuncioComInicioSchema = anuncioSchema.transform((a, ctx) => {
+  const inicio = a.dataHoraLocal ? utcDeHorarioLocal(a.dataHoraLocal, a.siglaEstado) : a.dataHoraInicio!;
+  if (!inicio) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Data ou horário inválido.', path: ['dataHoraLocal'] });
+    return z.NEVER;
+  }
+  return { ...a, dataHoraInicio: inicio };
+});
 
 export const statusAnuncioSchema = z.object({ status: z.enum(['ativo', 'pausado']) });
 
@@ -83,11 +108,11 @@ export const filtroAnunciosSchema = paginacao.extend({
   idModalidade: z.coerce.number().int().positive().optional(),
   idCategoriaEtaria: z.coerce.number().int().positive().optional(),
   idNivelTecnico: z.coerce.number().int().positive().optional(),
-  /** Dia no fuso do aparelho (YYYY-MM-DD). */
+  /** Dia no horário local da partida (UF do anúncio), YYYY-MM-DD. */
   data: z.string().date().optional(),
-  /** Partidas a partir deste horário, no fuso do aparelho (HH:mm). */
+  /** Partidas a partir deste horário local da partida (HH:mm). */
   horario: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
-  /** Deslocamento do fuso do aparelho em minutos. Padrão: Brasília (-180). */
+  /** Ignorado: o horário segue a UF do anúncio. Mantido para clientes antigos. */
   fusoMinutos: z.coerce.number().int().min(-720).max(840).default(-180),
 });
 

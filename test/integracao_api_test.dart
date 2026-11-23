@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:joga_contra/core/formatters.dart';
 import 'package:joga_contra/models/anuncio_partida.dart';
 import 'package:joga_contra/models/notificacao.dart';
 import 'package:joga_contra/models/partida.dart';
@@ -76,7 +77,12 @@ void main() {
         armazenamento: ArmazenamentoEmMemoria(),
       );
       final refs = await repos.referencias.carregar();
-      expect(refs.modalidades.map((m) => m.codigo), ['society', 'quadra']);
+      expect(refs.modalidades.map((m) => m.codigo), [
+        'society',
+        'futsal',
+        'campo',
+        'campo_reduzido',
+      ]);
       expect(refs.categoriasEtarias.map((c) => c.nome), [
         'Sub-15',
         'Sub-17',
@@ -153,6 +159,38 @@ void main() {
       final visto = await outro.repos.times.buscar(dono.idTime);
       expect(visto.urlEscudo, endereco);
       expect(visto.descricao, texto);
+    });
+
+    test('acentos e horário 21:00 chegam iguais a outro capitão', () async {
+      final dono = await _cadastrar('União Esportiva');
+      final desafiante = await _cadastrar('Taboão da Serra FC');
+      expect(dono.sessao.time.nome, 'União Esportiva');
+      const frase =
+          'Somos uma equipe de amigos apaixonados por futebol, união e competição saudável.';
+      await dono.repos.times.atualizar(
+        dono.idTime,
+        const AtualizacaoTime(descricao: frase),
+      );
+      final refs = await dono.repos.referencias.carregar();
+      final anuncio = await dono.repos.anuncios.criar(
+        RascunhoAnuncio(
+          idModalidade: refs.modalidades.last.id,
+          idNivelTecnico: refs.niveisTecnicos.first.id,
+          dataHoraInicio: DateTime(2026, 11, 26, 21),
+          duracaoMinutos: 60,
+          cidade: 'Cascavel',
+          siglaEstado: 'PR',
+          nomeLocal: 'Arena Biase Homologação',
+        ),
+      );
+      expect(Formatos.hora(anuncio.dataHoraInicio), '21:00');
+      final visto = await desafiante.repos.anuncios.obter(anuncio.id);
+      expect(Formatos.hora(visto.dataHoraInicio), '21:00');
+      expect(Formatos.dataNumerica(visto.dataHoraInicio), '26/11/2026');
+      expect(visto.modalidade.nome, 'Futebol de Campo Reduzido');
+      final time = await desafiante.repos.times.buscar(dono.idTime);
+      expect(time.nome, 'União Esportiva');
+      expect(time.descricao, frase);
     });
 
     test('token inválido salvo é descartado', () async {
@@ -282,6 +320,61 @@ void main() {
 
       final cancelada = await escolhido.repos.partidas.cancelar(partida.id);
       expect(cancelada.status, StatusPartida.cancelada);
+    });
+
+    test('chat: enviada, entregue e visualizada chegam ao app', () async {
+      final dono = await _cadastrar('Dono Chat');
+      final desafiante = await _cadastrar('Desafiante Chat');
+      final anuncio = await _publicar(dono);
+      final s = await desafiante.repos.solicitacoes.solicitar(anuncio.id);
+      await dono.repos.solicitacoes.confirmar(s.id);
+
+      final enviada = await desafiante.repos.solicitacoes.enviarMensagem(
+        s.id,
+        'Levamos as bolas.',
+      );
+      expect(enviada.status, StatusMensagem.enviada);
+      // Quem enviou sincroniza: a própria mensagem não muda de estado.
+      expect(await desafiante.repos.solicitacoes.sincronizar(), 0);
+      var vistas = await desafiante.repos.solicitacoes.mensagens(s.id);
+      expect(vistas.single.status, StatusMensagem.enviada);
+
+      // O app do dono sincroniza (sem abrir a conversa): entregue.
+      expect(await dono.repos.solicitacoes.sincronizar(), 1);
+      vistas = await desafiante.repos.solicitacoes.mensagens(s.id);
+      expect(vistas.single.status, StatusMensagem.entregue);
+      expect(vistas.single.dataLeitura, isNull);
+
+      // O dono abre a conversa: visualizada.
+      await dono.repos.solicitacoes.mensagens(s.id);
+      expect(await dono.repos.solicitacoes.sincronizar(), 0);
+      vistas = await desafiante.repos.solicitacoes.mensagens(s.id);
+      expect(vistas.single.status, StatusMensagem.visualizada);
+      expect(vistas.single.dataLeitura, isNotNull);
+    });
+
+    test('Meus Desafios só traz os pedidos feitos pelo meu time', () async {
+      final a = await _cadastrar('Anunciante Filtro');
+      final b = await _cadastrar('Desafiante Filtro');
+      final anuncioA = await _publicar(a);
+      final anuncioB = await _publicar(b);
+      final deB = await b.repos.solicitacoes.solicitar(anuncioA.id);
+      final deA = await a.repos.solicitacoes.solicitar(anuncioB.id);
+
+      final desafiosDeB = await b.repos.solicitacoes.listarDoMeuTime(
+        papel: PapelSolicitacao.solicitante,
+      );
+      expect(desafiosDeB.map((s) => s.id), [deB.id]);
+      expect(desafiosDeB.single.anuncio.id, anuncioA.id);
+      final recebidasDeB = await b.repos.solicitacoes.listarDoMeuTime(
+        papel: PapelSolicitacao.anunciante,
+      );
+      expect(recebidasDeB.map((s) => s.id), [deA.id]);
+      // Sem papel: as duas (lista de conversas).
+      expect(await b.repos.solicitacoes.listarDoMeuTime(), hasLength(2));
+      // Meus Anúncios: só o anúncio do próprio time.
+      final meus = await b.repos.anuncios.listarDoMeuTime();
+      expect(meus.map((x) => x.id), [anuncioB.id]);
     });
 
     test('editar, pausar, excluir e atualizar perfil', () async {

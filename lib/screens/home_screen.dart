@@ -47,7 +47,7 @@ class HomeScreen extends StatelessWidget {
             ),
             const SizedBox(height: 5),
             const Text(
-              'Seu time entra em campo. ⚽',
+              'Seu time entra em campo.',
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.w800,

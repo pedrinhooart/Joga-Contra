@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'core/formatters.dart';
 import 'models/anuncio_partida.dart';
@@ -22,7 +23,36 @@ class AppShell extends StatefulWidget {
   State<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
+  /// Com o app aberto, avisa a API de tempos em tempos que as mensagens
+  /// recebidas chegaram ao aparelho (indicador "entregue" para quem enviou).
+  static const intervaloSincronizacao = Duration(seconds: 30);
+  Timer? _sincronizacao;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _sincronizacao = Timer.periodic(
+      intervaloSincronizacao,
+      (_) => _sincronizar(),
+    );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState estado) {
+    if (estado == AppLifecycleState.resumed) _sincronizar();
+  }
+
+  Future<void> _sincronizar() async {
+    if (!mounted || !app.autenticado) return;
+    try {
+      await app.repositorios.solicitacoes.sincronizar();
+    } catch (_) {
+      // Sem conexão: tenta de novo no próximo ciclo.
+    }
+  }
+
   // Vivem com a tela: os diálogos ainda os usam durante a animação de fechar.
   final _nomeTime = TextEditingController();
   final _descricaoTime = TextEditingController();
@@ -32,7 +62,7 @@ class _AppShellState extends State<AppShell> {
 
   static const _paginasAuth = {'login', 'register', 'forgot'};
 
-  String page = 'home', gameTab = 'Todos';
+  String page = 'home', gameTab = GamesScreen.meusAnuncios;
   FiltrosBusca filtrosBusca = const FiltrosBusca();
   AnuncioPartida? anuncioSelecionado, anuncioEditando;
   String? idSolicitacao, idPartida;
@@ -43,6 +73,8 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    _sincronizacao?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     _nomeTime.dispose();
     _descricaoTime.dispose();
     super.dispose();
@@ -127,7 +159,8 @@ class _AppShellState extends State<AppShell> {
     final atual = app.autenticado || _paginasAuth.contains(page)
         ? page
         : 'login';
-    final tabs = const ['home', 'search', 'create', 'conversations', 'profile'];
+    // "Anunciar" saiu da barra: continua no Início (Anunciar jogo) e em Meus anúncios.
+    final tabs = const ['home', 'search', 'games', 'conversations', 'profile'];
     final tabIndex = tabs.indexOf(atual);
     final telaAuth = _paginasAuth.contains(atual);
     return PopScope(
@@ -189,35 +222,37 @@ class _AppShellState extends State<AppShell> {
         ),
         bottomNavigationBar: telaAuth
             ? null
-            : NavigationBar(
-                selectedIndex: tabIndex < 0 ? 0 : tabIndex,
-                onDestinationSelected: (i) => go(tabs[i]),
-                destinations: const [
-                  NavigationDestination(
-                    icon: Icon(Icons.home_outlined),
-                    selectedIcon: Icon(Icons.home),
-                    label: 'Início',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.search),
-                    label: 'Buscar',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.add_circle_outline),
-                    selectedIcon: Icon(Icons.add_circle),
-                    label: 'Anunciar',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.chat_bubble_outline),
-                    selectedIcon: Icon(Icons.chat_bubble),
-                    label: 'Conversas',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.person_outline),
-                    selectedIcon: Icon(Icons.person),
-                    label: 'Perfil',
-                  ),
-                ],
+            : _BarraInferior(
+                child: NavigationBar(
+                  selectedIndex: tabIndex < 0 ? 0 : tabIndex,
+                  onDestinationSelected: (i) => go(tabs[i]),
+                  destinations: const [
+                    NavigationDestination(
+                      icon: Icon(Icons.home_outlined),
+                      selectedIcon: Icon(Icons.home),
+                      label: 'Início',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.search),
+                      label: 'Buscar',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.sports_soccer_outlined),
+                      selectedIcon: Icon(Icons.sports_soccer),
+                      label: 'Meus Jogos',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.chat_bubble_outline),
+                      selectedIcon: Icon(Icons.chat_bubble),
+                      label: 'Conversas',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.person_outline),
+                      selectedIcon: Icon(Icons.person),
+                      label: 'Perfil',
+                    ),
+                  ],
+                ),
               ),
       ),
     );
@@ -270,6 +305,8 @@ class _AppShellState extends State<AppShell> {
       tab: gameTab,
       onTab: (v) => setState(() => gameTab = v),
       onAnuncios: () => go('ads'),
+      onAnunciar: () => go('create'),
+      onBuscar: () => go('search'),
       onChat: (s) => openChat(s.id),
       onPartida: (p) => openPartida(p.id),
       onAvaliar: (p) => setState(() {
@@ -536,5 +573,27 @@ class _AppShellState extends State<AppShell> {
   Future<void> _sair() async {
     await _executar(app.sair);
     if (mounted) go('login');
+  }
+}
+
+/// Em telas estreitas (até ~380 dp) cada aba tem uns 72 dp: o rótulo fica um
+/// pouco menor para "Meus Jogos" e "Conversas" caberem numa linha só.
+class _BarraInferior extends StatelessWidget {
+  const _BarraInferior({required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (MediaQuery.sizeOf(context).width >= 380) return child;
+    final tema = NavigationBarTheme.of(context);
+    return NavigationBarTheme(
+      data: tema.copyWith(
+        labelTextStyle: WidgetStateProperty.resolveWith(
+          (estados) =>
+              tema.labelTextStyle?.resolve(estados)?.copyWith(fontSize: 9.6),
+        ),
+      ),
+      child: child,
+    );
   }
 }

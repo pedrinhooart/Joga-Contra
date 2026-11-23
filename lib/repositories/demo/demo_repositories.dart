@@ -33,14 +33,26 @@ Repositorios criarRepositoriosDemo({DateTime? agora}) {
 const _society = ItemReferencia(
   id: 1,
   codigo: 'society',
-  nome: 'Futebol society/sintético',
+  nome: 'Society/Futebol Sintético',
   ordem: 10,
 );
-const _quadra = ItemReferencia(
+const _futsal = ItemReferencia(
   id: 2,
-  codigo: 'quadra',
-  nome: 'Futebol de quadra',
+  codigo: 'futsal',
+  nome: 'Futsal',
   ordem: 20,
+);
+const _campo = ItemReferencia(
+  id: 3,
+  codigo: 'campo',
+  nome: 'Futebol de Campo',
+  ordem: 30,
+);
+const _campoReduzido = ItemReferencia(
+  id: 4,
+  codigo: 'campo_reduzido',
+  nome: 'Futebol de Campo Reduzido',
+  ordem: 40,
 );
 const _sub15 = ItemReferencia(
   id: 1,
@@ -137,7 +149,7 @@ class DemoBanco {
   String novoId(String prefixo) => '$prefixo-${_seq++}';
 
   final referencias = Referencias(
-    modalidades: const [_society, _quadra],
+    modalidades: const [_society, _futsal, _campo, _campoReduzido],
     categoriasEtarias: const [_sub15, _sub17, _sub19, _livre],
     niveisTecnicos: const [_iniciante, _intermediario, _avancado],
     mandosCampo: const [_casa, _fora, _indiferente],
@@ -300,7 +312,7 @@ class DemoBanco {
       anuncio(
         'a-vila',
         vila,
-        _quadra,
+        _futsal,
         _livre,
         _intermediario,
         _indiferente,
@@ -383,15 +395,53 @@ class DemoBanco {
       confirmadoAnunciante: true,
       confirmadoSolicitante: true,
       idPartida: 'p-confirmada',
+      ultimaMensagem: 'Chegamos 15 minutos antes.',
+      dataUltimaMensagem: agora.subtract(const Duration(minutes: 10)),
     );
     solicitacoes.addAll([enviada, recebida, confirmadaAntiga]);
-    Mensagem msg(String s, String t, String texto, Duration atras) => Mensagem(
+    Mensagem msg(
+      String s,
+      String t,
+      String texto,
+      Duration atras, [
+      StatusMensagem status = StatusMensagem.enviada,
+    ]) => Mensagem(
       id: novoId('m'),
       idSolicitacao: s,
       idTimeRemetente: t,
       texto: texto,
       dataEnvio: agora.subtract(atras),
+      status: status,
     );
+    // Conversa liberada (desafio aceito) com os três estados do chat.
+    mensagens['s-real-antiga'] = [
+      msg(
+        's-real-antiga',
+        meuTime.id,
+        'Campo reservado para sábado.',
+        const Duration(minutes: 50),
+        StatusMensagem.visualizada,
+      ),
+      msg(
+        's-real-antiga',
+        real.id,
+        'Perfeito, estaremos lá.',
+        const Duration(minutes: 40),
+      ),
+      msg(
+        's-real-antiga',
+        meuTime.id,
+        'Levamos as bolas.',
+        const Duration(minutes: 20),
+        StatusMensagem.entregue,
+      ),
+      msg(
+        's-real-antiga',
+        meuTime.id,
+        'Chegamos 15 minutos antes.',
+        const Duration(minutes: 10),
+      ),
+    ];
     mensagens['s-real'] = [
       msg(
         's-real',
@@ -680,12 +730,6 @@ class _DemoAnuncios implements AnuncioRepository {
         )
         .where(
           (a) =>
-              f.raioKm == null ||
-              a.distanciaKm == null ||
-              a.distanciaKm! <= f.raioKm!,
-        )
-        .where(
-          (a) =>
               f.cidade == null ||
               a.cidade.toLowerCase().startsWith(f.cidade!.toLowerCase()),
         )
@@ -795,12 +839,23 @@ class _DemoSolicitacoes implements SolicitacaoRepository {
   );
 
   @override
-  Future<List<SolicitacaoConfronto>> listarDoMeuTime() async =>
+  Future<int> sincronizar() async => 0;
+
+  @override
+  Future<List<SolicitacaoConfronto>> listarDoMeuTime({
+    PapelSolicitacao? papel,
+  }) async =>
       db.solicitacoes
           .where(
-            (s) =>
-                s.timeAnunciante.id == db.meuTime.id ||
+            (s) => switch (papel) {
+              PapelSolicitacao.anunciante =>
+                s.timeAnunciante.id == db.meuTime.id,
+              PapelSolicitacao.solicitante =>
                 s.timeSolicitante.id == db.meuTime.id,
+              null =>
+                s.timeAnunciante.id == db.meuTime.id ||
+                    s.timeSolicitante.id == db.meuTime.id,
+            },
           )
           .toList()
         ..sort(

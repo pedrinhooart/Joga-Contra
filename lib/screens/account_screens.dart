@@ -379,13 +379,34 @@ class ProfileScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 15),
-                    Text(
-                      [
-                        'Responsável   ${time.nomeCapitao ?? app.usuario!.nome}',
-                        if (time.telefoneContato != null)
-                          'Contato           ${time.telefoneContato}',
-                      ].join('\n'),
-                      style: const TextStyle(fontSize: 11, height: 1.8),
+                    // Sem telefone no perfil: o contato entre os times é
+                    // feito pelo chat, liberado depois do aceite.
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.person_outline,
+                          size: 18,
+                          color: AppColors.muted,
+                        ),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Responsável',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.muted,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            time.nomeCapitao ?? app.usuario!.nome,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     const Divider(height: 22),
                     const Text(
@@ -936,18 +957,24 @@ class _Info extends StatelessWidget {
       children: [
         Icon(icon, size: 18, color: AppColors.green),
         const SizedBox(width: 10),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              style: const TextStyle(fontSize: 9, color: AppColors.muted),
-            ),
-            Text(
-              value,
-              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
-            ),
-          ],
+        // Valor longo (local, endereço) quebra a linha, sem estourar.
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(fontSize: 9, color: AppColors.muted),
+              ),
+              Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     ),

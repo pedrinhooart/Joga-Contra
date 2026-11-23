@@ -145,6 +145,18 @@ void main() {
         await tester.tapAt(const Offset(20, 20)); // fecha a folha
         await tester.pumpAndSettle();
 
+        // A lista é preguiçosa: rola até o primeiro card ser montado.
+        for (
+          var i = 0;
+          i < 20 && find.text('Ver detalhes').evaluate().isEmpty;
+          i++
+        ) {
+          await tester.drag(
+            find.byType(Scrollable).first,
+            const Offset(0, -150),
+          );
+          await tester.pumpAndSettle();
+        }
         await tester.ensureVisible(find.text('Ver detalhes').first);
         await tester.pumpAndSettle();
         final y = tester.getCenter(find.text('Ver detalhes').first).dy;
@@ -167,7 +179,16 @@ void main() {
         await aba('Conversas');
         await conferir('09_conversas');
 
-        await aba('Anunciar');
+        await aba('Meus Jogos');
+        await conferir('10_meus_anuncios');
+        await tester.tap(find.text('Meus Desafios'));
+        await conferir('10_meus_desafios');
+
+        // "Anunciar" saiu da barra: o formulário abre pelo Início.
+        await aba('Início');
+        await tester.ensureVisible(find.text('Anunciar jogo'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Anunciar jogo'));
         await conferir('10_anunciar');
         await rolarAteFim();
         await conferir('11_anunciar_fim');

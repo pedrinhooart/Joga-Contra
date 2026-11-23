@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../core/formatters.dart';
 import '../models/anuncio_partida.dart';
@@ -6,6 +7,7 @@ import '../models/partida.dart';
 import '../models/referencia.dart';
 import '../models/solicitacao_confronto.dart';
 import '../models/time.dart';
+import '../repositories/contratos.dart';
 import '../services/municipios.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -680,8 +682,15 @@ class _ChatScreenState extends State<ChatScreen> {
   final mensagens = <Mensagem>[];
   bool enviando = false;
 
+  /// Com a conversa aberta, busca de novo a cada poucos segundos: traz as
+  /// mensagens novas, marca as recebidas como visualizadas e atualiza os
+  /// indicadores das enviadas (entregue/visualizada).
+  static const intervaloAtualizacao = Duration(seconds: 4);
+  Timer? _atualizacao;
+
   @override
   void dispose() {
+    _atualizacao?.cancel();
     input.dispose();
     super.dispose();
   }
@@ -696,7 +705,41 @@ class _ChatScreenState extends State<ChatScreen> {
     mensagens
       ..clear()
       ..addAll(lista);
+    _atualizacao?.cancel();
+    if (s.chatLiberado) {
+      _atualizacao = Timer.periodic(intervaloAtualizacao, (_) => _atualizar());
+    }
     return s;
+  }
+
+  bool _atualizando = false;
+  Future<void> _atualizar() async {
+    if (_atualizando || !mounted) return;
+    _atualizando = true;
+    try {
+      final lista = await AppScope.repos(
+        context,
+      ).solicitacoes.mensagens(widget.idSolicitacao);
+      if (!mounted) return;
+      final mudou =
+          lista.length != mensagens.length ||
+          [
+            for (var i = 0; i < lista.length; i++)
+              lista[i].id != mensagens[i].id ||
+                  lista[i].status != mensagens[i].status,
+          ].any((x) => x);
+      if (mudou) {
+        setState(() {
+          mensagens
+            ..clear()
+            ..addAll(lista);
+        });
+      }
+    } catch (_) {
+      // Sem conexão: tenta de novo no próximo ciclo, sem incomodar.
+    } finally {
+      _atualizando = false;
+    }
   }
 
   /// Texto no lugar das mensagens enquanto o chat não está liberado.
@@ -819,7 +862,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                         for (final m in mensagens)
                           _Balao(
-                            texto: m.texto,
+                            mensagem: m,
                             mine: m.idTimeRemetente == idMeuTime,
                           ),
                       ],
@@ -931,26 +974,60 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 class _Balao extends StatelessWidget {
-  const _Balao({required this.texto, required this.mine});
-  final String texto;
+  const _Balao({required this.mensagem, required this.mine});
+  final Mensagem mensagem;
   final bool mine;
+
+  /// ✓ enviada · ✓✓ entregue · ✓✓ em destaque visualizada (só nas minhas).
+  Widget _indicador() {
+    final (icone, cor) = switch (mensagem.status) {
+      StatusMensagem.enviada => (Icons.done, Colors.white60),
+      StatusMensagem.entregue => (Icons.done_all, Colors.white60),
+      StatusMensagem.visualizada => (Icons.done_all, AppColors.lime),
+    };
+    return Semantics(
+      label: mensagem.status.rotulo,
+      child: Icon(icone, size: 13, color: cor),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => Align(
     alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
     child: Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(11),
+      padding: const EdgeInsets.fromLTRB(11, 9, 11, 6),
       constraints: const BoxConstraints(maxWidth: 250),
       decoration: BoxDecoration(
         color: mine ? AppColors.forest : const Color(0xFFF0F3F0),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Text(
-        texto,
-        style: TextStyle(
-          color: mine ? Colors.white : AppColors.ink,
-          fontSize: 12,
-        ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            mensagem.texto,
+            style: TextStyle(
+              color: mine ? Colors.white : AppColors.ink,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                Formatos.hora(mensagem.dataEnvio),
+                style: TextStyle(
+                  fontSize: 9,
+                  color: mine ? Colors.white60 : AppColors.muted,
+                ),
+              ),
+              if (mine) ...[const SizedBox(width: 3), _indicador()],
+            ],
+          ),
+        ],
       ),
     ),
   );
@@ -973,81 +1050,150 @@ class _ItemJogo {
   final VoidCallback abrir;
 }
 
+/// "Meus Jogos": dois filtros, cada um buscado na API.
+/// - Meus Anúncios: anúncios do meu time (`/anuncios/meus`).
+/// - Meus Desafios: anúncios de outros times que eu desafiei
+///   (`/solicitacoes/minhas?papel=solicitante`).
+/// Quando já existe partida, o item mostra o estado dela.
 class GamesScreen extends StatelessWidget {
   const GamesScreen({
     super.key,
     required this.tab,
     required this.onTab,
     required this.onAnuncios,
+    required this.onAnunciar,
+    required this.onBuscar,
     required this.onChat,
     required this.onPartida,
     required this.onAvaliar,
   });
   final String tab;
   final ValueChanged<String> onTab;
-  final VoidCallback onAnuncios;
+  final VoidCallback onAnuncios, onAnunciar, onBuscar;
   final ValueChanged<SolicitacaoConfronto> onChat;
   final ValueChanged<Partida> onPartida, onAvaliar;
 
-  static const tabs = [
-    'Todos',
-    'Aguardando',
-    'Em análise',
-    'Confirmado',
-    'Realizado',
-    'Cancelado',
-  ];
+  static const meusAnuncios = 'Meus Anúncios';
+  static const meusDesafios = 'Meus Desafios';
+  static const tabs = [meusAnuncios, meusDesafios];
+
+  _ItemJogo _daPartida(Partida p, String idMeuTime) {
+    final avaliar =
+        p.status == StatusPartida.realizada && !p.avaliadaPeloMeuTime;
+    return _ItemJogo(
+      status: p.status.rotulo,
+      adversario: p.adversarioDe(idMeuTime),
+      data: p.dataHoraInicio,
+      acao: avaliar ? 'Avaliar' : 'Ver partida',
+      abrir: avaliar ? () => onAvaliar(p) : () => onPartida(p),
+    );
+  }
+
+  /// Uma partida por anúncio (a cancelada só fica se não houver outra).
+  static Map<String, Partida> _partidaPorAnuncio(Iterable<Partida> partidas) {
+    final partidaDe = <String, Partida>{};
+    for (final p in partidas) {
+      final chave = p.idAnuncio ?? p.id;
+      final atual = partidaDe[chave];
+      if (atual != null &&
+          atual.status != StatusPartida.cancelada &&
+          p.status == StatusPartida.cancelada) {
+        continue;
+      }
+      partidaDe[chave] = p;
+    }
+    return partidaDe;
+  }
+
+  Future<List<_ItemJogo>> _anuncios(
+    Repositorios repos,
+    String idMeuTime,
+  ) async {
+    // A API devolve os anúncios ainda abertos (ativo, pausado, expirado); os
+    // que viraram partida chegam pelas partidas em que o meu time anunciou.
+    final anuncios = await repos.anuncios.listarDoMeuTime();
+    final partidas = await repos.partidas.listarDoMeuTime();
+    final partidaDe = _partidaPorAnuncio(
+      partidas.where((p) => p.timeAnunciante.id == idMeuTime),
+    );
+    final itens = <String, _ItemJogo>{
+      for (final e in partidaDe.entries) e.key: _daPartida(e.value, idMeuTime),
+    };
+    for (final a in anuncios) {
+      final p = partidaDe[a.id];
+      if (p != null && p.status != StatusPartida.cancelada) continue;
+      itens[a.id] = _ItemJogo(
+        status: switch (a.status) {
+          StatusAnuncio.ativo => 'Aguardando adversário',
+          _ => a.status.rotulo,
+        },
+        adversario: null,
+        data: a.dataHoraInicio,
+        acao: 'Ver anúncio',
+        abrir: onAnuncios,
+      );
+    }
+    return itens.values.toList();
+  }
+
+  Future<List<_ItemJogo>> _desafios(
+    Repositorios repos,
+    String idMeuTime,
+  ) async {
+    final desafios = await repos.solicitacoes.listarDoMeuTime(
+      papel: PapelSolicitacao.solicitante,
+    );
+    final partidas = await repos.partidas.listarDoMeuTime();
+    // Um item por anúncio: vale a solicitação mais recente do meu time.
+    final porAnuncio = <String, SolicitacaoConfronto>{};
+    for (final s in desafios) {
+      final atual = porAnuncio[s.anuncio.id];
+      if (atual == null || s.dataSolicitacao.isAfter(atual.dataSolicitacao)) {
+        porAnuncio[s.anuncio.id] = s;
+      }
+    }
+    // Partidas em que o meu time foi o desafiante (o anúncio era do outro).
+    final partidaDe = _partidaPorAnuncio(
+      partidas.where((p) => p.timeAdversario.id == idMeuTime),
+    );
+    final itens = <String, _ItemJogo>{
+      for (final e in partidaDe.entries) e.key: _daPartida(e.value, idMeuTime),
+    };
+    for (final s in porAnuncio.values) {
+      final p = partidaDe[s.anuncio.id];
+      // A partida vale, a não ser que tenha sido cancelada e o meu time
+      // tenha desafiado de novo depois.
+      if (p != null &&
+          (p.status != StatusPartida.cancelada || p.idSolicitacao == s.id)) {
+        continue;
+      }
+      itens[s.anuncio.id] = _ItemJogo(
+        status: s.status.rotulo,
+        adversario: s.timeAnunciante,
+        data: s.anuncio.dataHoraInicio,
+        acao: 'Ver solicitação',
+        abrir: () => onChat(s),
+      );
+    }
+    return itens.values.toList();
+  }
 
   @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
     final time = app.time!;
     final repos = app.repositorios;
+    final desafios = tab == meusDesafios;
     return Carregador<List<_ItemJogo>>(
+      // Trocar de filtro busca de novo na API.
+      key: ValueKey(tab),
       carregar: () async {
-        final anuncios = await repos.anuncios.listarDoMeuTime();
-        final solicitacoes = await repos.solicitacoes.listarDoMeuTime();
-        final partidas = await repos.partidas.listarDoMeuTime();
-        return [
-          for (final a in anuncios)
-            if (a.status == StatusAnuncio.ativo ||
-                a.status == StatusAnuncio.pausado)
-              _ItemJogo(
-                status: 'Aguardando',
-                adversario: null,
-                data: a.dataHoraInicio,
-                acao: 'Ver detalhes',
-                abrir: onAnuncios,
-              ),
-          for (final s in solicitacoes)
-            if (s.status.emAberto)
-              _ItemJogo(
-                status: 'Em análise', // aguardando o aceite do anunciante
-                adversario: s.adversario(time.id),
-                data: s.anuncio.dataHoraInicio,
-                acao: 'Ver detalhes',
-                abrir: () => onChat(s),
-              ),
-          for (final p in partidas)
-            _ItemJogo(
-              status: p.status.rotulo,
-              adversario: p.adversarioDe(time.id),
-              data: p.dataHoraInicio,
-              acao:
-                  p.status == StatusPartida.realizada && !p.avaliadaPeloMeuTime
-                  ? 'Avaliar'
-                  : 'Ver detalhes',
-              abrir:
-                  p.status == StatusPartida.realizada && !p.avaliadaPeloMeuTime
-                  ? () => onAvaliar(p)
-                  : () => onPartida(p),
-            ),
-        ];
+        final itens = desafios
+            ? await _desafios(repos, time.id)
+            : await _anuncios(repos, time.id);
+        return itens..sort((a, b) => b.data.compareTo(a.data));
       },
-      builder: (context, todos, _) {
-        final items = todos
-            .where((x) => tab == 'Todos' || tab == x.status)
-            .toList();
+      builder: (context, items, _) {
         return ListView(
           padding: const EdgeInsets.fromLTRB(18, 22, 18, 26),
           children: [
@@ -1056,35 +1202,34 @@ class GamesScreen extends StatelessWidget {
               subtitle:
                   'Acompanhe seus jogos, da primeira conversa ao apito final.',
             ),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: tabs
-                    .map(
-                      (x) => Padding(
-                        padding: const EdgeInsets.only(right: 5),
-                        child: ChoiceChip(
-                          label: Text(x, style: const TextStyle(fontSize: 10)),
-                          selected: tab == x,
-                          onSelected: (_) => onTab(x),
-                        ),
-                      ),
-                    )
-                    .toList(),
-              ),
+            // Mesmo estilo dos tipos de jogo na busca.
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final x in tabs)
+                  ChipFiltro(x, selecionado: tab == x, onTap: () => onTab(x)),
+              ],
             ),
             const SizedBox(height: 12),
             if (items.isEmpty)
-              tab == 'Cancelado'
-                  ? const EmptyState(
-                      title: 'Nenhuma partida cancelada',
+              desafios
+                  ? EmptyState(
+                      title: 'Nenhum desafio enviado ainda.',
                       message:
-                          'Bom sinal! Compromisso também faz parte do jogo.',
+                          'Encontre um jogo de outro time e toque em "Tenho interesse".',
+                      action: TextButton(
+                        onPressed: onBuscar,
+                        child: const Text('Buscar adversário'),
+                      ),
                     )
-                  : const EmptyState(
-                      title: 'Nada por aqui ainda.',
-                      message:
-                          'Quando seu time tiver jogos, eles aparecem aqui.',
+                  : EmptyState(
+                      title: 'Você ainda não publicou um anúncio.',
+                      message: 'Anuncie um jogo e encontre um adversário.',
+                      action: TextButton(
+                        onPressed: onAnunciar,
+                        child: const Text('Anunciar jogo'),
+                      ),
                     ),
             for (final item in items)
               Padding(
@@ -1129,12 +1274,23 @@ class GamesScreen extends StatelessWidget {
                       const SizedBox(height: 9),
                       Row(
                         children: [
-                          TagPill(
-                            item.status,
-                            green: item.status == 'Confirmado',
-                            orange: item.status == 'Em análise',
+                          // O selo usa todo o espaço livre: quebra entre
+                          // palavras, nunca no meio de uma.
+                          Expanded(
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: TagPill(
+                                item.status,
+                                green:
+                                    item.status ==
+                                    StatusPartida.confirmada.rotulo,
+                                orange:
+                                    item.status ==
+                                    StatusSolicitacao.pendente.rotulo,
+                              ),
+                            ),
                           ),
-                          const Spacer(),
+                          const SizedBox(width: 8),
                           ActionButton(
                             item.acao,
                             outline: true,

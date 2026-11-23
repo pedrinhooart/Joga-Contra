@@ -180,7 +180,7 @@ void main() {
       );
       await tester.enterText(
         find.widgetWithText(TextFormField, 'Nome do time'),
-        'Unidos FC',
+        'Time Taboão da Serra',
       );
       await _escolherEstado(tester, 'SP');
       await tester.enterText(_campoCidade, 'campinas');
@@ -193,7 +193,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('BOM TE VER, ANA'), findsOneWidget);
       expect(
-        find.text('Encontre o próximo adversário para o Unidos FC.'),
+        find.text('Encontre o próximo adversário para o Time Taboão da Serra.'),
         findsOneWidget,
       );
       await tester.pump(const Duration(seconds: 5)); // snackbar
@@ -206,7 +206,11 @@ void main() {
 
       // Anúncio: modalidade e nível continuam, sem nada marcado; categoria,
       // quantidade, mando e bairro saíram do formulário.
-      await tester.tap(find.text('Anunciar').last);
+      await tester.tap(find.text('Início').last);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Anunciar jogo'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Anunciar jogo'));
       await tester.pumpAndSettle();
       for (final campo in ['Modalidade', 'Nível do time']) {
         final dropdown = find.widgetWithText(

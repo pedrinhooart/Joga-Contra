@@ -1,3 +1,4 @@
+import { fusoDaUf, horarioLocal } from './fuso.js';
 import { ApiError } from '../middlewares/error-handler.js';
 import { consultar, dataIso, marcadores, type Executor, type Linha } from './helpers.js';
 import { colunasResumoTime, mapearAnuncio, mapearResumoTime, mapearTime } from './mapeadores.js';
@@ -106,17 +107,47 @@ async function montarSolicitacoes(db: Executor, linhas: Linha[], idMeuTime: stri
   });
 }
 
-/** Solicitações em que `idTime` é anunciante ou solicitante. */
-export async function listarSolicitacoes(db: Executor, idTime: string, limite: string) {
+/**
+ * Solicitações em que `idTime` participa. `papel` restringe a quem anunciou
+ * (anunciante) ou a quem desafiou (solicitante) — "Meus desafios".
+ */
+export async function listarSolicitacoes(
+  db: Executor,
+  idTime: string,
+  limite: string,
+  papel?: 'anunciante' | 'solicitante',
+) {
+  const onde =
+    papel === 'anunciante'
+      ? 's.id_time_anunciante = ?'
+      : papel === 'solicitante'
+        ? 's.id_time_solicitante = ?'
+        : '(s.id_time_anunciante = ? OR s.id_time_solicitante = ?)';
   const linhas = await consultar(
     db,
     `${SELECT_SOLICITACAO}
-      WHERE s.id_time_anunciante = ? OR s.id_time_solicitante = ?
+      WHERE ${onde}
       ORDER BY COALESCE(r.data_ultima_mensagem, s.data_criacao) DESC
       ${limite}`,
-    [idTime, idTime],
+    papel ? [idTime] : [idTime, idTime],
   );
   return montarSolicitacoes(db, linhas, idTime);
+}
+
+/**
+ * Entrega: as mensagens do outro capitão chegaram ao app de `idTime` (sem que
+ * ele tenha aberto a conversa). Só em chats liberados; nunca as próprias.
+ */
+export async function marcarEntregues(db: Executor, idTime: string, idSolicitacao?: string) {
+  await db.execute(
+    `UPDATE mensagens m
+       JOIN solicitacoes_confronto s ON s.id_solicitacao = m.id_solicitacao
+        SET m.data_entrega = UTC_TIMESTAMP(3)
+      WHERE m.data_entrega IS NULL AND m.id_time_remetente <> ? AND s.status = 'confirmada'
+        AND (s.id_time_anunciante = ? OR s.id_time_solicitante = ?)
+        ${idSolicitacao ? 'AND m.id_solicitacao = ?' : ''}`,
+    idSolicitacao ? [idTime, idTime, idTime, idSolicitacao] : [idTime, idTime, idTime],
+  );
 }
 
 /** Solicitações de um anúncio, para o capitão dono analisar. */
@@ -166,6 +197,9 @@ const mapearPartida = (r: Linha) => ({
   timeAdversario: mapearResumoTime(r, 'adversario'),
   modalidade: { id: r.id_modalidade, codigo: r.codigo_modalidade, nome: r.nome_modalidade, ordem: r.ordem_modalidade },
   dataHoraInicio: dataIso(r.data_hora_inicio),
+  // Horário local da partida (UF), igual para todos, em qualquer fuso de aparelho.
+  dataHoraLocal: horarioLocal(r.data_hora_inicio, r.sigla_estado),
+  fusoHorario: fusoDaUf(r.sigla_estado),
   nomeLocal: r.nome_local,
   endereco: r.endereco,
   cidade: r.cidade,

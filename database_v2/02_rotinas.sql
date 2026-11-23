@@ -224,8 +224,9 @@ BEGIN
      OR NOT (OLD.id_time_remetente <=> NEW.id_time_remetente)
      OR NOT (OLD.id_usuario_remetente <=> NEW.id_usuario_remetente)
      OR NOT (OLD.data_envio <=> NEW.data_envio)
+     OR (OLD.data_entrega IS NOT NULL AND NOT (OLD.data_entrega <=> NEW.data_entrega))
      OR (OLD.data_leitura IS NOT NULL AND NOT (OLD.data_leitura <=> NEW.data_leitura)) THEN
-    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Mensagens são imutáveis; apenas a leitura pode ser registrada.';
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Mensagens são imutáveis; apenas a entrega e a leitura podem ser registradas.';
   END IF;
 END$$
 

@@ -41,7 +41,7 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
   let executarRotinas: () => Promise<void>;
   let registrosPreservadosAfetados: () => Promise<{ anuncios: number; partidas: number }>;
 
-  type Capitao = { token: string; idUsuario: string; idTime: string; nomeTime: string };
+  type Capitao = { token: string; idUsuario: string; idTime: string; nomeTime: string; email: string };
 
   const api = (c?: Capitao) => {
     const agente = (metodo: 'get' | 'post' | 'put' | 'patch' | 'delete', caminho: string) => {
@@ -58,10 +58,11 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
   };
 
   async function novoCapitao(nomeTime: string, categoria = LIVRE): Promise<Capitao> {
+    const email = `teste.homologacao.${randomUUID()}@example.com`;
     const r = await api().post('/auth/cadastro').send({
       usuario: {
         nome: `Capitão ${nomeTime}`,
-        email: `teste.homologacao.${randomUUID()}@example.com`,
+        email,
         senha: SENHA,
         telefone: '(11) 90000-0000',
         cidade: 'São Paulo',
@@ -78,7 +79,7 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
       },
     });
     expect(r.status).toBe(201);
-    return { token: r.body.data.token, idUsuario: r.body.data.usuario.idUsuario, idTime: r.body.data.time.idTime, nomeTime };
+    return { token: r.body.data.token, idUsuario: r.body.data.usuario.idUsuario, idTime: r.body.data.time.idTime, nomeTime, email };
   }
 
   const dadosAnuncio = (extra: Record<string, unknown> = {}) => ({
@@ -135,7 +136,10 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
 
   it('referências usam as classificações oficiais, separadas', async () => {
     const { data } = (await api().get('/referencias')).body;
-    expect(data.modalidades.map((m: any) => m.nome)).toEqual(['Futebol society/sintético', 'Futebol de quadra']);
+    expect(data.modalidades.map((m: any) => m.nome)).toEqual([
+      'Society/Futebol Sintético', 'Futsal', 'Futebol de Campo', 'Futebol de Campo Reduzido',
+    ]);
+    expect(data.modalidades.map((m: any) => m.codigo)).toEqual(['society', 'futsal', 'campo', 'campo_reduzido']);
     expect(data.categoriasEtarias.map((c: any) => c.nome)).toEqual(['Sub-15', 'Sub-17', 'Sub-19', 'Livre']);
     expect(data.niveisTecnicos.map((n: any) => n.nome)).toEqual(['Iniciante', 'Intermediário', 'Avançado']);
     expect(data.estados).toHaveLength(27);
@@ -242,6 +246,164 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
     expect(vazia.body.data.descricao).toBeNull();
   });
 
+  it('acentos: nome do time e "Sobre o time" ficam intactos', async () => {
+    const nomes = ['Time Taboão da Serra', 'Vilson Prato Feito', 'São Paulo', 'União Esportiva'];
+    for (const nome of nomes) {
+      const r = await api().post('/auth/cadastro').send({
+        usuario: { nome: 'Capitão João', email: `teste.homologacao.${randomUUID()}@example.com`, senha: SENHA },
+        time: { nome, cidade: 'Taboão da Serra', siglaEstado: 'SP' },
+      });
+      expect(r.status).toBe(201);
+      expect(r.body.data.time.nome).toBe(nome);
+      expect(r.body.data.usuario.nome).toBe('Capitão João');
+    }
+    const c = await novoCapitao('Acentuação');
+    const frase = 'Somos uma equipe de amigos apaixonados por futebol, união e competição saudável.';
+    expect((await api(c).patch(`/times/${c.idTime}`).send({ descricao: frase })).body.data.descricao).toBe(frase);
+    // Reabrir o app (sessão) e outro capitão leem o mesmo texto.
+    expect((await api(c).get('/auth/eu')).body.data.time.descricao).toBe(frase);
+    // No banco, em UTF-8 de verdade ("ã" = C3 A3, "ç" = C3 A7).
+    const [[linha]] = await pool.query('SELECT HEX(descricao) h FROM times WHERE id_time = ?', [c.idTime]);
+    expect(linha.h).toContain('C3A3'); // ã
+    expect(linha.h).toContain('C3A7'); // ç
+    // "ã" enviado decomposto (a + til, NFD) é gravado composto (NFC).
+    const nfd = 'Taboão FC';
+    const editado = await api(c).patch(`/times/${c.idTime}`).send({ nome: nfd });
+    expect(editado.body.data.nome).toBe('Taboão FC');
+    expect(editado.body.data.nome).toHaveLength(9);
+  });
+
+  it('as quatro modalidades no anúncio e na busca', async () => {
+    const dono = await novoCapitao('Modalidades');
+    const leitor = await novoCapitao('Leitor Modalidades');
+    const refs = (await api().get('/referencias')).body.data.modalidades;
+    const marca = `Mod${randomUUID().slice(0, 8)}`;
+    for (const m of refs) {
+      const a = await publicar(dono, { idModalidade: m.id, nomeLocal: `${marca} ${m.codigo}` });
+      expect(a.modalidade.nome).toBe(m.nome);
+      const achados = (await api(leitor).get(`/anuncios?limite=100&texto=${marca}&idModalidade=${m.id}`)).body.data;
+      expect(achados.map((x: any) => x.modalidade.codigo)).toEqual([m.codigo]);
+    }
+  });
+
+  it('horário: 21:00 do anúncio aparece 21:00 para todos (cenário Arena Biase)', async () => {
+    const dono = await novoCapitao('Vilson Homologação');
+    const desafiante = await novoCapitao('Joga Homologação');
+    const marca = `Biase${randomUUID().slice(0, 8)}`;
+    const criado = await api(dono).post('/anuncios').send({
+      ...dadosAnuncio({ cidade: 'Cascavel', siglaEstado: 'PR', nomeLocal: `Arena ${marca}` }),
+      dataHoraInicio: undefined,
+      dataHoraLocal: '2026-11-26T21:00',
+    });
+    expect(criado.status).toBe(201);
+    const local = { dataHoraLocal: '2026-11-26T21:00:00', fusoHorario: 'America/Sao_Paulo' };
+    expect(criado.body.data).toMatchObject(local);
+    // No banco: o instante certo (21:00 em Brasília = 00:00 UTC do dia 27).
+    const [[gravado]] = await pool.query(
+      "SELECT DATE_FORMAT(data_hora_inicio, '%Y-%m-%d %H:%i') d FROM anuncios_partidas WHERE id_anuncio = ?",
+      [criado.body.data.idAnuncio],
+    );
+    expect(gravado.d).toBe('2026-11-27 00:00');
+
+    // O desafiante vê 21:00 na busca e nos detalhes, e os filtros usam o horário local.
+    const busca = (f: string) => api(desafiante).get(`/anuncios?limite=100&texto=${marca}${f}`);
+    expect((await busca('')).body.data[0]).toMatchObject(local);
+    expect((await busca('&data=2026-11-26&horario=21:00')).body.data).toHaveLength(1);
+    expect((await busca('&data=2026-11-27')).body.data).toHaveLength(0);
+    expect((await busca('&horario=21:01')).body.data).toHaveLength(0);
+    expect((await api(desafiante).get(`/anuncios/${criado.body.data.idAnuncio}`)).body.data).toMatchObject(local);
+
+    // Solicitação e partida também em 21:00, para os dois.
+    const s = await solicitar(desafiante, criado.body.data.idAnuncio);
+    expect(s.anuncio).toMatchObject(local);
+    const { idPartida } = (await api(dono).patch(`/solicitacoes/${s.idSolicitacao}/confirmar`).expect(200)).body.data;
+    for (const c of [dono, desafiante]) {
+      expect((await api(c).get(`/partidas/${idPartida}`)).body.data).toMatchObject(local);
+      expect((await api(c).get(`/solicitacoes/${s.idSolicitacao}`)).body.data.anuncio).toMatchObject(local);
+    }
+  });
+
+  it('chat: enviada → entregue → visualizada, persistido e só para os dois capitães', async () => {
+    const dono = await novoCapitao('Dono Indicadores');
+    const desafiante = await novoCapitao('Desafiante Indicadores');
+    const terceiro = await novoCapitao('Terceiro Indicadores');
+    const anuncio = await publicar(dono);
+    const s = await solicitar(desafiante, anuncio.idAnuncio);
+    await api(dono).patch(`/solicitacoes/${s.idSolicitacao}/confirmar`).expect(200);
+    const conversa = `/solicitacoes/${s.idSolicitacao}/mensagens`;
+
+    // 1 e 2. Enviada.
+    const enviada = await api(desafiante).post(conversa).send({ texto: 'Bora às 21h?' });
+    expect(enviada.status).toBe(201);
+    expect(enviada.body.data).toMatchObject({ status: 'enviada', dataEntrega: null, dataLeitura: null });
+
+    // O remetente sincronizar ou reabrir a conversa não muda o estado da própria mensagem.
+    await api(desafiante).get('/solicitacoes/sincronizar').expect(200);
+    expect((await api(desafiante).get(conversa)).body.data[0].status).toBe('enviada');
+
+    // 3. Entregue: o app do dono sincroniza (sem abrir a conversa). Entrega não é leitura.
+    const sync = await api(dono).get('/solicitacoes/sincronizar');
+    expect(sync.body.data.mensagensNaoLidas).toBeGreaterThanOrEqual(1);
+    expect((await api(desafiante).get(conversa)).body.data[0]).toMatchObject({ status: 'entregue', dataLeitura: null });
+    const [[gravado]] = await pool.query('SELECT data_entrega, data_leitura FROM mensagens WHERE id_mensagem = ?', [enviada.body.data.idMensagem]);
+    expect(gravado.data_entrega).not.toBeNull();
+    expect(gravado.data_leitura).toBeNull();
+
+    // 4 e 5. O dono abre a conversa: visualizada para o remetente.
+    await api(dono).get(conversa).expect(200);
+    const visto = (await api(desafiante).get(conversa)).body.data[0];
+    expect(visto.status).toBe('visualizada');
+    expect(new Date(visto.dataLeitura).getTime()).toBeGreaterThanOrEqual(new Date(visto.dataEntrega).getTime());
+
+    // Abrir a conversa marca também a entrega, se ainda não constava.
+    const resposta = await api(dono).post(conversa).send({ texto: 'Fechado!' });
+    await api(desafiante).get(conversa).expect(200);
+    const doDono = (await api(dono).get(conversa)).body.data.find((m: any) => m.idMensagem === resposta.body.data.idMensagem);
+    expect(doDono).toMatchObject({ status: 'visualizada' });
+    expect(doDono.dataEntrega).not.toBeNull();
+
+    // 6. Terceiros não acessam nem sincronizam mensagens alheias.
+    expect((await api(terceiro).get(conversa)).status).toBe(404);
+    expect((await api(terceiro).post(conversa).send({ texto: 'Oi' })).status).toBe(404);
+    expect((await api(terceiro).get('/solicitacoes/sincronizar')).body.data.mensagensNaoLidas).toBe(0);
+
+    // 7. Persistência: outra sessão (novo login) vê os mesmos estados.
+    const login = await api().post('/auth/login').send({ email: desafiante.email, senha: SENHA });
+    const outraSessao = { ...desafiante, token: login.body.data.token };
+    expect((await api(outraSessao).get(conversa)).body.data.map((m: any) => m.status)).toEqual(['visualizada', 'visualizada']);
+
+    // Leitura é registrada uma única vez (gatilho do banco).
+    await expect(
+      pool.execute('UPDATE mensagens SET data_leitura = UTC_TIMESTAMP(3) WHERE id_mensagem = ?', [enviada.body.data.idMensagem]),
+    ).rejects.toMatchObject({ code: 'ER_SIGNAL_EXCEPTION' });
+  });
+
+  it('meus desafios: só anúncios de outros times em que o meu time pediu desafio', async () => {
+    const eu = await novoCapitao('Eu Desafios');
+    const outro = await novoCapitao('Outro Desafios');
+    const terceiro = await novoCapitao('Terceiro Desafios');
+    const meu = await publicar(eu);
+    const alvo = await publicar(outro);
+    const semPedido = await publicar(terceiro);
+    const s = await solicitar(eu, alvo.idAnuncio);
+    await solicitar(outro, meu.idAnuncio); // alguém desafiou o meu anúncio
+
+    const desafios = (await api(eu).get('/solicitacoes/minhas?papel=solicitante')).body.data;
+    expect(desafios.map((x: any) => x.idSolicitacao)).toEqual([s.idSolicitacao]);
+    expect(desafios[0].anuncio.idAnuncio).toBe(alvo.idAnuncio);
+    expect(desafios.some((x: any) => x.anuncio.idAnuncio === semPedido.idAnuncio)).toBe(false);
+    const recebidas = (await api(eu).get('/solicitacoes/minhas?papel=anunciante')).body.data;
+    expect(recebidas.map((x: any) => x.anuncio.idAnuncio)).toEqual([meu.idAnuncio]);
+    expect((await api(eu).get('/solicitacoes/minhas?papel=outro')).status).toBe(400);
+
+    // Estado acompanha aceite e cancelamento da partida.
+    const { idPartida } = (await api(outro).patch(`/solicitacoes/${s.idSolicitacao}/confirmar`).expect(200)).body.data;
+    expect((await api(eu).get('/solicitacoes/minhas?papel=solicitante')).body.data[0]).toMatchObject({ status: 'confirmada', idPartida });
+    await api(eu).patch(`/partidas/${idPartida}/cancelar`).send({ motivo: 'Teste' }).expect(200);
+    expect((await api(eu).get(`/partidas/${idPartida}`)).body.data.status).toBe('cancelada');
+    expect((await api(eu).get('/anuncios/meus')).body.data.map((a: any) => a.idAnuncio)).toEqual([meu.idAnuncio]);
+  });
+
   it('cadastro com time inválido não deixa usuário órfão (transação)', async () => {
     const email = `teste.homologacao.${randomUUID()}@example.com`;
     const r = await api().post('/auth/cadastro').send({
@@ -264,7 +426,7 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
     });
     expect(r.status).toBe(200);
     expect(r.body.data).toMatchObject({ nome: 'Time Editado', descricao: 'Sobre nós', quantidadeJogadores: 20 });
-    expect(r.body.data.modalidades.map((m: any) => m.codigo)).toEqual(['quadra']);
+    expect(r.body.data.modalidades.map((m: any) => m.codigo)).toEqual(['futsal']);
     expect(r.body.data.telefoneContato).toBe('(11) 90000-0000');
 
     expect((await api(b).patch(`/times/${a.idTime}`).send({ nome: 'Invasão' })).status).toBe(403);
@@ -409,7 +571,7 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
     const refs = (await api().get('/referencias')).body.data;
     expect(refs.categoriasEtarias.map((c: any) => c.nome)).toEqual(['Sub-15', 'Sub-17', 'Sub-19', 'Livre']);
     expect(refs.niveisTecnicos.map((n: any) => n.nome)).toEqual(['Iniciante', 'Intermediário', 'Avançado']);
-    expect(refs.modalidades).toHaveLength(2);
+    expect(refs.modalidades).toHaveLength(4);
 
     const marca = `Matriz${randomUUID().slice(0, 8)}`;
     const criados: { id: string; categoria: number; nivel: number; modalidade: number }[] = [];

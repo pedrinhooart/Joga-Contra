@@ -25,10 +25,12 @@ AS novo
 ON DUPLICATE KEY UPDATE nome = novo.nome;
 
 INSERT INTO modalidades (id_modalidade, codigo, nome, ordem) VALUES
-  (1, 'society', 'Futebol society/sintético', 10),
-  (2, 'quadra',  'Futebol de quadra',         20)
+  (1, 'society',        'Society/Futebol Sintético',  10),
+  (2, 'futsal',         'Futsal',                     20),
+  (3, 'campo',          'Futebol de Campo',           30),
+  (4, 'campo_reduzido', 'Futebol de Campo Reduzido',  40)
 AS novo
-ON DUPLICATE KEY UPDATE nome = novo.nome, ordem = novo.ordem;
+ON DUPLICATE KEY UPDATE codigo = novo.codigo, nome = novo.nome, ordem = novo.ordem;
 
 INSERT INTO categorias_etarias (id_categoria_etaria, codigo, nome, idade_maxima, ordem) VALUES
   (1, 'sub_15', 'Sub-15', 15,   10),
