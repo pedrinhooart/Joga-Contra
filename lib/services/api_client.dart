@@ -32,6 +32,20 @@ class ApiClient {
 
   Future<dynamic> get(String path, {Map<String, Object?>? query}) =>
       _send('GET', path, query: query);
+
+  /// GET que devolve também o `meta` do envelope (ex.: paginação).
+  Future<({Object? data, Map<String, dynamic> meta})> getComMeta(
+    String path, {
+    Map<String, Object?>? query,
+  }) async {
+    final envelope = await _enviar('GET', path, query: query);
+    final meta = envelope['meta'];
+    return (
+      data: envelope['data'],
+      meta: meta is Map<String, dynamic> ? meta : const <String, dynamic>{},
+    );
+  }
+
   Future<dynamic> post(String path, [Object? body]) =>
       _send('POST', path, body: body);
   Future<dynamic> put(String path, [Object? body]) =>
@@ -60,6 +74,25 @@ class ApiClient {
   }
 
   Future<dynamic> _send(
+    String method,
+    String path, {
+    Object? body,
+    Map<String, Object?>? query,
+    Uint8List? bytes,
+    String? contentType,
+    Duration? timeout,
+  }) async => (await _enviar(
+    method,
+    path,
+    body: body,
+    query: query,
+    bytes: bytes,
+    contentType: contentType,
+    timeout: timeout,
+  ))['data'];
+
+  /// Envelope completo da resposta (`data` e `meta`).
+  Future<Map<String, dynamic>> _enviar(
     String method,
     String path, {
     Object? body,
@@ -111,6 +144,6 @@ class ApiClient {
         code: error is Map ? error['code'] as String? : null,
       );
     }
-    return decoded['data'];
+    return decoded;
   }
 }

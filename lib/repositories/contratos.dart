@@ -80,8 +80,21 @@ abstract interface class SolicitacaoRepository {
   Future<SolicitacaoConfronto> recusar(String idSolicitacao);
   Future<SolicitacaoConfronto> cancelar(String idSolicitacao);
 
+  /// Consultar as mensagens também marca a conversa como aberta na API (as
+  /// mensagens novas não geram push enquanto ela está na tela).
   Future<List<Mensagem>> mensagens(String idSolicitacao);
-  Future<Mensagem> enviarMensagem(String idSolicitacao, String texto);
+
+  /// `idMensagem` (gerado no aparelho) torna o envio repetível: tentar de
+  /// novo após uma falha de conexão não duplica a mensagem.
+  Future<Mensagem> enviarMensagem(
+    String idSolicitacao,
+    String texto, {
+    String? idMensagem,
+  });
+
+  /// A conversa saiu da tela (outra tela ou app em segundo plano): as
+  /// mensagens novas voltam a gerar push.
+  Future<void> marcarPresenca(String idSolicitacao, {required bool aberta});
 }
 
 abstract interface class PartidaRepository {
@@ -93,15 +106,61 @@ abstract interface class PartidaRepository {
   Future<List<AvaliacaoRecebida>> avaliacoesDoTime(String idTime);
 }
 
+/// Central de notificações do capitão logado (a API identifica a conta
+/// pelo token; o app nunca informa de quem são as notificações).
 abstract interface class NotificacaoRepository {
-  Future<List<Notificacao>> listar();
+  /// Mais recentes primeiro.
+  Future<PaginaNotificacoes> listar({int pagina = 1, int limite = 20});
+
+  /// Contador do sino. `total` só aumenta quando chega notificação nova.
+  Future<({int naoLidas, int total})> resumo();
+
+  /// Marcar de novo uma já lida não é erro.
   Future<void> marcarComoLida(String idNotificacao);
+
+  /// Devolve quantas estavam não lidas.
+  Future<int> marcarTodasComoLidas();
+
+  Future<PreferenciasNotificacoes> preferencias();
+  Future<PreferenciasNotificacoes> salvarPreferencias(
+    PreferenciasNotificacoes preferencias,
+  );
 }
 
 /// Agrupa os repositórios para injeção nas telas.
 /// Locais esportivos reais de uma cidade, para sugerir no anúncio.
 abstract interface class LocalRepository {
   Future<LocaisDaCidade> daCidade(String siglaEstado, String cidade);
+}
+
+/// Aparelho que recebe notificações push. A API associa o token à conta da
+/// sessão; o app nunca informa de quem é o aparelho.
+abstract interface class DispositivoRepository {
+  /// Registra ou renova (idempotente). `tokenAnterior`: token que este
+  /// aparelho usava antes da renovação pelo Firebase.
+  Future<void> registrar({
+    required String token,
+    required String plataforma,
+    required bool permitido,
+    String? tokenAnterior,
+  });
+
+  /// Sair da conta neste aparelho: para de receber push desta conta.
+  Future<void> desativar(String token);
+}
+
+/// Sem push (demonstração e testes): não faz nada.
+class DispositivosDesligados implements DispositivoRepository {
+  const DispositivosDesligados();
+  @override
+  Future<void> registrar({
+    required String token,
+    required String plataforma,
+    required bool permitido,
+    String? tokenAnterior,
+  }) async {}
+  @override
+  Future<void> desativar(String token) async {}
 }
 
 class Repositorios {
@@ -114,6 +173,7 @@ class Repositorios {
     required this.partidas,
     required this.notificacoes,
     required this.locais,
+    this.dispositivos = const DispositivosDesligados(),
   });
   final AuthRepository auth;
   final ReferenciaRepository referencias;
@@ -123,4 +183,5 @@ class Repositorios {
   final PartidaRepository partidas;
   final NotificacaoRepository notificacoes;
   final LocalRepository locais;
+  final DispositivoRepository dispositivos;
 }

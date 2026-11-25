@@ -48,6 +48,18 @@
             </intent-filter>
             -->
         </activity>
+        <!-- Push (Firebase Cloud Messaging): canal e ícone padrão das
+             notificações. O canal é criado em MainActivity.kt; a permissão
+             POST_NOTIFICATIONS (Android 13+) vem do plugin firebase_messaging. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="joga_contra_avisos" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notificacao" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/notificacao" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

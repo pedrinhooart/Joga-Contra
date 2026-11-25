@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Cor de destaque das notificações push (verde-floresta do Joga Contra). -->
+    <color name="notificacao">#123D2B</color>
+</resources>

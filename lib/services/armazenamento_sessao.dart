@@ -6,12 +6,17 @@ abstract interface class ArmazenamentoSessao {
   Future<String?> lerToken();
   Future<void> salvarToken(String token);
   Future<void> apagarToken();
+
+  /// Último token de push registrado na API por este aparelho.
+  Future<String?> lerTokenPush();
+  Future<void> salvarTokenPush(String token);
 }
 
 /// Keychain/Keystore do sistema operacional.
 class ArmazenamentoSeguro implements ArmazenamentoSessao {
   const ArmazenamentoSeguro();
   static const _chave = 'joga_contra_token';
+  static const _chavePush = 'joga_contra_token_push';
   static const _storage = FlutterSecureStorage();
 
   @override
@@ -21,6 +26,11 @@ class ArmazenamentoSeguro implements ArmazenamentoSessao {
       _storage.write(key: _chave, value: token);
   @override
   Future<void> apagarToken() => _storage.delete(key: _chave);
+  @override
+  Future<String?> lerTokenPush() => _storage.read(key: _chavePush);
+  @override
+  Future<void> salvarTokenPush(String token) =>
+      _storage.write(key: _chavePush, value: token);
 }
 
 /// Sem persistência (testes).
@@ -32,4 +42,9 @@ class ArmazenamentoEmMemoria implements ArmazenamentoSessao {
   Future<void> salvarToken(String valor) async => token = valor;
   @override
   Future<void> apagarToken() async => token = null;
+  String? tokenPush;
+  @override
+  Future<String?> lerTokenPush() async => tokenPush;
+  @override
+  Future<void> salvarTokenPush(String valor) async => tokenPush = valor;
 }

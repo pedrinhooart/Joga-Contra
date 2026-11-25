@@ -11,6 +11,7 @@ import 'screens/activity_screens.dart';
 import 'screens/discover_screen.dart';
 import 'screens/game_detail_screen.dart';
 import 'screens/home_screen.dart';
+import 'services/push.dart';
 import 'services/selecao_imagem.dart';
 import 'state/app_state.dart';
 import 'theme/app_theme.dart';
@@ -44,6 +45,47 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     if (estado == AppLifecycleState.resumed) _sincronizar();
   }
 
+  StreamSubscription<MensagemPush>? _avisosPush;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _avisosPush ??= app.avisosPush.listen(_avisarPush);
+  }
+
+  /// Push com o app aberto: o sistema não mostra nada, então um aviso discreto
+  /// na própria tela (com "Ver") substitui a notificação, sem duplicar.
+  void _avisarPush(MensagemPush m) {
+    if (!mounted || !app.autenticado) return;
+    // Mensagem da conversa que já está na tela: ela mesma se atualiza.
+    if (page == 'chat' &&
+        m.tipo == 'mensagem_recebida' &&
+        m.referenciaId == idSolicitacao) {
+      return;
+    }
+    if (page == 'notifications') _recarregar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(m.corpo.isEmpty ? m.titulo : '${m.titulo}\n${m.corpo}'),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 5),
+        action: SnackBarAction(label: 'Ver', onPressed: () => app.abrirPush(m)),
+      ),
+    );
+  }
+
+  /// Push tocado: marca como lida e abre o conteúdo, como na central. As telas
+  /// buscam os dados na API, que confere se a conta participa deles.
+  void _abrirPushPendente() {
+    final m = app.consumirPush();
+    if (m == null || !mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    app.repositorios.notificacoes
+        .marcarComoLida(m.idNotificacao)
+        .then((_) => app.atualizarNotificacoes(), onError: (_) => false);
+    _abrirNotificacao(m.comoNotificacao());
+  }
+
   /// Última versão das solicitações e partidas do meu time vista pelo app.
   String? _versaoDados;
 
@@ -53,6 +95,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   Future<void> _sincronizar() async {
     if (!mounted || !app.autenticado) return;
+    // Contador do sino; com a central aberta, a lista recarrega se chegou
+    // notificação nova.
+    final chegouNotificacao = await app.atualizarNotificacoes();
+    if (!mounted) return;
+    if (chegouNotificacao && page == 'notifications') _recarregar();
     try {
       final r = await app.repositorios.solicitacoes.sincronizar();
       if (!mounted) return;
@@ -85,6 +132,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   @override
   void dispose() {
     _sincronizacao?.cancel();
+    _avisosPush?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _nomeTime.dispose();
     _descricaoTime.dispose();
@@ -102,6 +150,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     'map': 'Mapa de jogos',
     'profile': 'Perfil do time',
     'notifications': 'Notificações',
+    'notification-settings': 'Preferências de notificação',
     'details': 'Detalhes do jogo',
     'confirmed': 'Partida confirmada',
     'review': 'Avaliar partida',
@@ -174,6 +223,13 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         ),
       );
     }
+    // Push tocado (inclusive com o app fechado): abre quando houver sessão; sem
+    // sessão, espera o login.
+    if (app.pushParaAbrir != null &&
+        app.autenticado &&
+        app.tokenRedefinicao == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _abrirPushPendente());
+    }
     // Link de redefinição de senha aberto: a tela de nova senha vem antes de
     // tudo, com ou sem sessão. Sem sessão, só as telas de autenticação.
     final atual = app.tokenRedefinicao != null
@@ -213,7 +269,21 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   IconButton(
                     tooltip: 'Notificações',
                     onPressed: () => go('notifications'),
-                    icon: const Icon(Icons.notifications_none),
+                    // Contador de não lidas, no padrão das conversas.
+                    icon: Badge(
+                      isLabelVisible: app.notificacoesNaoLidas > 0,
+                      backgroundColor: AppColors.forest,
+                      textColor: AppColors.lime,
+                      label: Text(
+                        app.notificacoesNaoLidas > 99
+                            ? '99+'
+                            : '${app.notificacoesNaoLidas}',
+                        semanticsLabel: app.notificacoesNaoLidas == 1
+                            ? '1 não lida'
+                            : '${app.notificacoesNaoLidas} não lidas',
+                      ),
+                      child: const Icon(Icons.notifications_none),
+                    ),
                   ),
                   IconButton(
                     tooltip: 'Perfil',
@@ -288,6 +358,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     'confirmed' => 'games',
     'review' => 'games',
     'notifications' => 'home',
+    'notification-settings' => 'notifications',
     'map' => 'search',
     _ => 'home',
   };
@@ -353,7 +424,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       onGames: () => go('games'),
       onLogout: _sair,
     ),
-    'notifications' => NotificationsScreen(onOpen: _abrirNotificacao),
+    'notifications' => NotificationsScreen(
+      onOpen: _abrirNotificacao,
+      onPreferencias: () => go('notification-settings'),
+    ),
+    'notification-settings' => const PreferenciasNotificacoesScreen(),
     'map' => MapScreen(onSelect: openAnuncio),
     'review' when partidaAvaliada != null => ReviewScreen(
       partida: partidaAvaliada!,
@@ -505,18 +580,44 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     if (mounted) go('games');
   }
 
-  void _abrirNotificacao(Notificacao n) => switch (n.tipo) {
-    TipoNotificacao.solicitacaoRecebida || TipoNotificacao.mensagemRecebida
-        when n.idSolicitacao != null =>
-      openChat(n.idSolicitacao!),
-    TipoNotificacao.partidaConfirmada || TipoNotificacao.partidaCancelada
-        when n.idPartida != null =>
-      openPartida(n.idPartida!),
-    TipoNotificacao.anuncioExpirando => go('ads'),
-    TipoNotificacao.solicitacaoRecebida ||
-    TipoNotificacao.mensagemRecebida => go('conversations'),
-    _ => go('games'),
-  };
+  void _abrirNotificacao(Notificacao n) {
+    // Aviso geral sem conteúdo ligado: só é marcado como lido, e a pessoa
+    // continua na central.
+    if (n.tipo == TipoNotificacao.aviso &&
+        n.idSolicitacao == null &&
+        n.idPartida == null &&
+        n.idAnuncio == null) {
+      return;
+    }
+    // Cada tela busca o conteúdo na API, que confere se a conta participa
+    // dele (404 caso contrário): a notificação só indica o destino.
+    switch (n.tipo) {
+      // Desafio recebido, enviado ou mensagem: abre a solicitação (conversa).
+      case TipoNotificacao.solicitacaoRecebida ||
+              TipoNotificacao.solicitacaoEnviada ||
+              TipoNotificacao.mensagemRecebida
+          when n.idSolicitacao != null:
+        openChat(n.idSolicitacao!);
+      // Desafio aceito e jogo cancelado: abre o jogo.
+      case TipoNotificacao.partidaConfirmada ||
+              TipoNotificacao.partidaCancelada ||
+              TipoNotificacao.lembretePartida
+          when n.idPartida != null:
+        openPartida(n.idPartida!);
+      // Solicitação recusada ou encerrada: Meus Desafios mostra o motivo.
+      case TipoNotificacao.solicitacaoRecusada ||
+          TipoNotificacao.solicitacaoEncerrada:
+        setState(() => gameTab = GamesScreen.meusDesafios);
+        go('games');
+      case TipoNotificacao.anuncioExpirando:
+        go('ads');
+      case TipoNotificacao.solicitacaoRecebida ||
+          TipoNotificacao.mensagemRecebida:
+        go('conversations');
+      default:
+        go('games');
+    }
+  }
 
   Future<void> _editProfile() async {
     _nomeTime.text = app.time!.nome;

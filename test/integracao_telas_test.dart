@@ -252,8 +252,10 @@ void main() {
       await _esperarTexto(tester, find.text('Aguardando aceite'));
       expect(find.text(nomeDono), findsOneWidget);
 
+      // Quem enviou o desafio tem o registro do envio, já lido (sem número no sino).
       await tester.tap(find.byTooltip('Notificações'));
-      await _esperarTexto(tester, find.text('Tudo tranquilo por aqui.'));
+      await _esperarTexto(tester, find.text('Desafio enviado'));
+      expect(find.text('Nenhuma não lida'), findsOneWidget);
 
       await tester.tap(find.text('Perfil').last);
       await _esperarTexto(tester, find.text('Visitante $marca'));
@@ -270,8 +272,8 @@ void main() {
       await tester.tap(find.text('Entrar'));
       await _esperarTexto(tester, find.text('BOM TE VER, DONO'));
       await tester.tap(find.byTooltip('Notificações'));
-      await _esperarTexto(tester, find.text('Tem rival querendo jogo!'));
-      await tester.tap(find.text('Tem rival querendo jogo!'));
+      await _esperarTexto(tester, find.text('Novo desafio recebido'));
+      await tester.tap(find.text('Novo desafio recebido'));
       await _esperarTexto(tester, find.text('Aceitar desafio'));
       expect(find.byIcon(Icons.send), findsNothing); // chat ainda fechado
 
@@ -487,6 +489,156 @@ void main() {
       await tester.tap(find.text('Salvar nova senha'));
       await _esperarTexto(tester, find.text('Link já utilizado'));
       expect(state.autenticado, isTrue); // a tentativa falha e nada muda
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 20));
+    },
+  );
+
+  testWidgets(
+    'central de notificações: aviso real no sino, na lista e lido',
+    skip: _url.isEmpty,
+    (tester) async {
+      tester.view.physicalSize = const Size(600, 1600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      // O backend cria a notificação de verdade: outro time pede desafio.
+      final marca = DateTime.now().microsecondsSinceEpoch.toString();
+      final (dono, emailDono) = (await tester.runAsync(
+        () => _capitao('Avisos $marca'),
+      ))!;
+      final idAnuncio = (await tester.runAsync(() async {
+        final refs = await dono.referencias.carregar();
+        final anuncio = await dono.anuncios.criar(
+          RascunhoAnuncio(
+            idModalidade: refs.modalidades.first.id,
+            idNivelTecnico: refs.niveisTecnicos.first.id,
+            dataHoraInicio: DateTime.now().add(const Duration(days: 6)),
+            duracaoMinutos: 90,
+            cidade: 'São Paulo',
+            siglaEstado: 'SP',
+            nomeLocal: 'Arena Avisos',
+          ),
+        );
+        return anuncio.id;
+      }))!;
+      final (visita, _) = (await tester.runAsync(
+        () => _capitao('Visita $marca'),
+      ))!;
+      await tester.runAsync(() => visita.solicitacoes.solicitar(idAnuncio));
+
+      final state = AppState(
+        criarRepositoriosApi(
+          ApiClient(baseUrl: _url),
+          armazenamento: ArmazenamentoEmMemoria(),
+        ),
+      );
+      await tester.pumpWidget(JogaContraApp(state: state));
+      await _esperarTexto(tester, find.text('Seu time em campo.'));
+      await tester.enterText(find.byType(TextFormField).at(0), emailDono);
+      await tester.enterText(find.byType(TextFormField).at(1), _senha);
+      await tester.tap(find.text('Entrar'));
+      await _esperarTexto(tester, find.text('BOM TE VER, CAPITÃO'));
+
+      // Contador no sino.
+      final contador = find.descendant(
+        of: find.byTooltip('Notificações'),
+        matching: find.text('1'),
+      );
+      await _esperarTexto(tester, contador);
+      await _semSnackbar(tester);
+
+      await tester.tap(find.byTooltip('Notificações'));
+      await _esperarTexto(tester, find.text('Novo desafio recebido'));
+      expect(find.text('1 não lida'), findsOneWidget);
+      expect(find.byKey(const ValueKey('marcador-nao-lida')), findsOneWidget);
+      expect(find.textContaining('Visita $marca'), findsOneWidget);
+
+      // Tocar abre a conversa do pedido e marca como lida na API.
+      await tester.tap(find.text('Novo desafio recebido'));
+      await _esperarTexto(tester, find.text('Conversa'));
+      await _aguardar(tester);
+      final resumo = (await tester.runAsync(() => dono.notificacoes.resumo()))!;
+      expect(resumo, (naoLidas: 0, total: 1));
+      expect(contador, findsNothing);
+      expect(state.notificacoesNaoLidas, 0);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 20));
+    },
+  );
+
+  testWidgets(
+    'eventos reais: "Desafio aceito!" chega ao desafiante e abre o jogo',
+    skip: _url.isEmpty,
+    (tester) async {
+      tester.view.physicalSize = const Size(600, 1600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final marca = DateTime.now().microsecondsSinceEpoch.toString();
+      final (dono, _) = (await tester.runAsync(
+        () => _capitao('Uniao $marca'),
+      ))!;
+      final (joga, emailJoga) = (await tester.runAsync(
+        () => _capitao('Joga $marca'),
+      ))!;
+      // O dono anuncia, o JOGA desafia e o dono aceita: tudo pela API real.
+      await tester.runAsync(() async {
+        final refs = await dono.referencias.carregar();
+        final anuncio = await dono.anuncios.criar(
+          RascunhoAnuncio(
+            idModalidade: refs.modalidades.first.id,
+            idNivelTecnico: refs.niveisTecnicos.first.id,
+            dataHoraInicio: DateTime.now().add(const Duration(days: 8)),
+            duracaoMinutos: 90,
+            cidade: 'São Paulo',
+            siglaEstado: 'SP',
+            nomeLocal: 'Arena Biase',
+          ),
+        );
+        final pedido = await joga.solicitacoes.solicitar(anuncio.id);
+        await dono.solicitacoes.confirmar(pedido.id);
+      });
+
+      final state = AppState(
+        criarRepositoriosApi(
+          ApiClient(baseUrl: _url),
+          armazenamento: ArmazenamentoEmMemoria(),
+        ),
+      );
+      await tester.pumpWidget(JogaContraApp(state: state));
+      await _esperarTexto(tester, find.text('Seu time em campo.'));
+      await tester.enterText(find.byType(TextFormField).at(0), emailJoga);
+      await tester.enterText(find.byType(TextFormField).at(1), _senha);
+      await tester.tap(find.text('Entrar'));
+      await _esperarTexto(tester, find.text('BOM TE VER, CAPITÃO'));
+
+      // Só o aceite conta como novidade (o envio chegou já lido).
+      await _esperarTexto(
+        tester,
+        find.descendant(
+          of: find.byTooltip('Notificações'),
+          matching: find.text('1'),
+        ),
+      );
+      await _semSnackbar(tester);
+      await tester.tap(find.byTooltip('Notificações'));
+      await _esperarTexto(tester, find.text('Desafio aceito!'));
+      expect(find.text('Desafio enviado'), findsOneWidget);
+      expect(
+        find.textContaining('Arena Biase. O chat com o outro capitão'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('contra o time Uniao $marca'), findsOneWidget);
+
+      await tester.tap(find.text('Desafio aceito!'));
+      await _esperarTexto(tester, find.text('Partida confirmada'));
+      await _aguardar(tester);
+      expect(state.notificacoesNaoLidas, 0);
 
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(seconds: 20));

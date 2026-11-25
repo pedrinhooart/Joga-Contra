@@ -122,7 +122,11 @@ export const filtroAnunciosSchema = paginacao.extend({
 });
 
 export const solicitacaoSchema = z.object({ idAnuncio: id, mensagemInicial: textoOpcional(1000) });
-export const mensagemSchema = z.object({ texto: z.string().trim().min(1).max(1000) });
+export const mensagemSchema = z.object({
+  texto: z.string().trim().min(1).max(1000),
+  /** Gerado pelo app (UUID em minúsculas): repetir o envio não duplica a mensagem. */
+  idMensagem: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/).optional(),
+});
 export const cancelamentoPartidaSchema = z.object({ motivo: textoOpcional(500) });
 export const avaliacaoSchema = z.object({
   notas: z

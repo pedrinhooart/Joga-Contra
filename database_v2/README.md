@@ -33,6 +33,11 @@ Banco novo, em português, criado a partir de [docs/AUDITORIA_DADOS_DINAMICOS.md
 | 9 | [09_modalidades.sql](09_modalidades.sql) | Modalidades: Society/Futebol Sintético, Futsal (antes "Futebol de quadra"), Futebol de Campo e Futebol de Campo Reduzido. Só cadastro de referência; anúncios antigos mantêm o id. Aplicada no `joga_contra_v2` em 23/11/2026 | Sim (idempotente) |
 | 10 | [10_mensagens_entrega.sql](10_mensagens_entrega.sql) | Migração: coluna `mensagens.data_entrega` (estados do chat: enviada, entregue, visualizada) e gatilho de mensagens recriado para aceitar a entrega uma única vez. Não altera mensagens existentes. **Só para bancos criados antes**: 01 e 02 já trazem o resultado. Aplicada no `joga_contra_v2` em 23/11/2026 | Não (ADD COLUMN) |
 | 11 | [11_conflito_horario.sql](11_conflito_horario.sql) | Regra do mesmo horário: cria `fn_inicio_local` e recria `proc_confirmar_solicitacao`. Ao aceitar um desafio, as outras solicitações **pendentes** do mesmo time desafiante para jogos na mesma data e hora local são encerradas (com motivo, sem apagar) na mesma transação, e os capitães afetados são avisados. Só rotinas: não altera tabelas nem dados. **Só para bancos criados antes**: 02 já traz o resultado. Aplicada no `joga_contra_v2` em 23/11/2026 | Sim (remove e recria as rotinas) |
+| 12 | [12_notificacoes_central.sql](12_notificacoes_central.sql) | Central de notificações: coluna `notificacoes.chave_evento` com UNIQUE (destinatário, chave) para não duplicar avisos, índice da lista paginada, tipo `aviso` e gatilho de imutabilidade recriado. Não altera nem apaga notificações. **Só para bancos criados antes**: 01 e 02 já trazem o resultado. Aplicada no `joga_contra_v2` em 25/11/2026 | Não (ADD COLUMN) |
+| 13 | [13_notificacoes_eventos.sql](13_notificacoes_eventos.sql) | Notificações dos eventos (fase 2): tipo `solicitacao_enviada`, função `fn_quando_texto` ('26/11 às 21h' no horário local) e procedimentos `proc_confirmar_solicitacao`, `proc_recusar_solicitacao`, `proc_cancelar_partida`, `proc_excluir_anuncio` e `proc_expirar_anuncios` recriados só nos textos, destinatários e `chave_evento` das notificações (tabela em `backend/README.md`, "Notificações dos eventos"). Não altera regras nem dados. **Só para bancos criados antes**: 01 e 02 já trazem o resultado. Aplicada no `joga_contra_v2` em 25/11/2026 | Sim (remove e recria as rotinas) |
+| 14 | [14_push.sql](14_push.sql) | Push (Firebase Cloud Messaging): tabelas `dispositivos_push` (aparelhos; token UNIQUE, uma conta por token; nada é apagado) e `envios_push` (fila outbox, uma linha por notificação) e gatilho `gat_notificacoes_depois_inserir`, que põe cada notificação nova e não lida na fila na mesma transação do evento. Notificações já existentes não entram na fila. **Só para bancos criados antes**: 01 e 02 já trazem o resultado. Aplicada no `joga_contra_v2` em 25/11/2026 | Não (CREATE TABLE) |
+| 15 | [15_presenca_chat.sql](15_presenca_chat.sql) | Presença no chat: tabela `conversas_abertas` (capitão, conversa, aberta, último acesso), atualizada pela API quando o app consulta as mensagens ou avisa que saiu. Com a conversa aberta (< 12 s), mensagens novas geram notificação já lida e sem push. Não altera dados. **Só para bancos criados antes**: 01 já traz o resultado. Aplicada no `joga_contra_v2` em 25/11/2026 | Não (CREATE TABLE) |
+| 16 | [16_lembretes_preferencias.sql](16_lembretes_preferencias.sql) | Lembretes de jogo e preferências: tipo `lembrete_partida`, tabelas `lembretes_partidas` (controle: partida + tipo + horário, `enviado`/`pulado`) e `preferencias_notificacoes` (categorias por capitão; sem linha = tudo ativo) e gatilho `gat_notificacoes_antes_inserir` (categoria desativada: registra já lida, sem push). Não altera dados. **Só para bancos criados antes**: 01 e 02 já trazem o resultado. Aplicada no `joga_contra_v2` em 25/11/2026 | Não (CREATE TABLE) |
 
 Nenhum script contém `DROP DATABASE` ou `DROP TABLE`. O 06 remove apenas os registros e os procedimentos auxiliares `teste_*` que ele mesmo criou.
 
@@ -225,12 +230,15 @@ Uso pela API (recuperação de senha por e-mail, sem mudança de estrutura): val
 |---|---|---|---|
 | `id_notificacao` | uuid | S | PK |
 | `id_usuario_destinatario` | uuid | S | FK `usuarios` (capitão) |
-| `tipo` | VARCHAR(40) | S | `solicitacao_recebida`, `mensagem_recebida`, `partida_confirmada`, `partida_cancelada`, `solicitacao_encerrada`, `solicitacao_recusada`, `anuncio_expirando`, `avaliacao_pendente` |
+| `tipo` | VARCHAR(40) | S | `solicitacao_recebida`, `mensagem_recebida`, `partida_confirmada`, `partida_cancelada`, `solicitacao_encerrada`, `solicitacao_recusada`, `anuncio_expirando`, `avaliacao_pendente`, `aviso` (aviso geral), `solicitacao_enviada` (registro de quem enviou o desafio), `lembrete_partida` (24 h, 2 h e 30 min antes) |
 | `titulo` | VARCHAR(160) | S | |
 | `mensagem` | VARCHAR(500) | S | |
 | `id_anuncio` / `id_solicitacao` / `id_partida` | uuid | N | FKs. No máximo uma preenchida (destino ao tocar) |
+| `chave_evento` | VARCHAR(150) ascii | N | Evento de origem (ex.: `mensagem_recebida:<id>`). UN com o destinatário: um evento gera no máximo uma notificação por pessoa, mesmo com tentativas repetidas. NULL nas antigas e nas dos procedimentos |
 | `data_leitura` | data | N | Só a leitura pode ser registrada, uma vez |
 | `data_criacao` | data | S | |
+
+Índices: `ind_notificacoes_destinatario` (destinatário, leitura, criação) para contar não lidas e `ind_notificacoes_lista` (destinatário, criação, id) para a lista paginada. O gatilho `gat_notificacoes_antes_atualizar` impede alterar qualquer coluna além da leitura; não há exclusão.
 
 ### 3.12 Visões (dados calculados, nada armazenado)
 
@@ -377,7 +385,7 @@ Por que as FKs compostas: elas garantem pelo próprio banco que a solicitação 
 | 8 | As demais solicitações são encerradas automaticamente | Na mesma transação da confirmação | `proc_confirmar_solicitacao` |
 | 9 | Capitães não selecionados são notificados | Uma notificação `solicitacao_encerrada` por capitão afetado, na mesma transação | `proc_confirmar_solicitacao` |
 | 10 | Anúncio tem modalidade, categoria e nível | As três FKs `NOT NULL` | Banco |
-| 11 | Um time não joga duas partidas ao mesmo tempo | Ao aceitar um desafio, as outras solicitações **pendentes** do mesmo time desafiante para jogos com a mesma data e hora **local** de início (`fn_inicio_local`: instante UTC + fuso da UF) viram `encerrada`, com `motivo_encerramento`; os donos desses anúncios e o capitão desafiante recebem `solicitacao_encerrada`. Nunca a aceita, nunca as de outros times, nada é apagado | `proc_confirmar_solicitacao` |
+| 11 | Um time não joga duas partidas ao mesmo tempo | Ao aceitar um desafio, as outras solicitações **pendentes** do mesmo time desafiante para jogos com a mesma data e hora **local** de início (`fn_inicio_local`: instante UTC + fuso da UF) viram `encerrada`, com `motivo_encerramento`; só o capitão desafiante recebe `solicitacao_encerrada` ("Solicitação encerrada por conflito de horário"), uma por solicitação encerrada. Nunca a aceita, nunca as de outros times, nada é apagado | `proc_confirmar_solicitacao` |
 
 ### 6.2 Confirmação: transação e concorrência
 

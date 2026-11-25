@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:joga_contra/core/uuid.dart';
 import 'package:joga_contra/core/formatters.dart';
 import 'package:joga_contra/models/anuncio_partida.dart';
 import 'package:joga_contra/models/notificacao.dart';
@@ -301,13 +302,13 @@ void main() {
         StatusSolicitacao.encerrada,
       );
       final avisos = await outro.repos.notificacoes.listar();
-      final aviso = avisos.firstWhere(
+      final aviso = avisos.itens.firstWhere(
         (n) => n.tipo == TipoNotificacao.solicitacaoEncerrada,
       );
       expect(aviso.idSolicitacao, s2.id);
       await outro.repos.notificacoes.marcarComoLida(aviso.id);
       expect(
-        (await outro.repos.notificacoes.listar())
+        (await outro.repos.notificacoes.listar()).itens
             .firstWhere((n) => n.id == aviso.id)
             .lida,
         isTrue,
@@ -446,5 +447,134 @@ void main() {
       expect(perfil.mediaAvaliacao, isNull);
       expect(await c.repos.partidas.avaliacoesDoTime(c.idTime), isEmpty);
     });
+
+    test(
+      'central de notificações: contador, páginas, leitura e isolamento',
+      () async {
+        final dono = await _cadastrar('Dono Avisos');
+        final anuncio = await _publicar(dono);
+        final visitantes = [
+          for (final nome in ['Visita A', 'Visita B', 'Visita C'])
+            await _cadastrar(nome),
+        ];
+        for (final v in visitantes) {
+          await v.repos.solicitacoes.solicitar(anuncio.id);
+        }
+        final avisos = dono.repos.notificacoes;
+        expect(await avisos.resumo(), (naoLidas: 3, total: 3));
+
+        final p1 = await avisos.listar(limite: 2);
+        final p2 = await avisos.listar(pagina: 2, limite: 2);
+        expect([p1.itens.length, p2.itens.length], [2, 1]);
+        expect([p1.temMais, p2.temMais], [true, false]);
+        expect((p1.total, p1.naoLidas), (3, 3));
+        final todos = [...p1.itens, ...p2.itens];
+        expect(todos.map((n) => n.id).toSet(), hasLength(3));
+        expect(
+          todos.every((n) => n.tipo == TipoNotificacao.solicitacaoRecebida),
+          isTrue,
+        );
+        expect(
+          todos.first.dataCriacao.isAfter(todos.last.dataCriacao) ||
+              todos.first.dataCriacao == todos.last.dataCriacao,
+          isTrue,
+        );
+
+        // Marcar duas vezes não é erro.
+        await avisos.marcarComoLida(todos.first.id);
+        await avisos.marcarComoLida(todos.first.id);
+        expect((await avisos.resumo()).naoLidas, 2);
+
+        // Outro capitão não marca (nem enxerga) as do dono.
+        await expectLater(
+          visitantes.first.repos.notificacoes.marcarComoLida(todos[1].id),
+          throwsA(
+            isA<ApiException>().having((e) => e.statusCode, 'status', 404),
+          ),
+        );
+        // O visitante só tem o próprio registro de envio (já lido).
+        final doVisitante =
+            (await visitantes.first.repos.notificacoes.listar()).itens;
+        expect(doVisitante.map((n) => n.tipo), [
+          TipoNotificacao.solicitacaoEnviada,
+        ]);
+        expect(doVisitante.single.lida, isTrue);
+        expect(
+          (await visitantes.first.repos.notificacoes.resumo()).naoLidas,
+          0,
+        );
+        expect((await avisos.resumo()).naoLidas, 2);
+
+        expect(await avisos.marcarTodasComoLidas(), 2);
+        expect(await avisos.marcarTodasComoLidas(), 0);
+        expect(await avisos.resumo(), (naoLidas: 0, total: 3));
+        expect((await avisos.listar()).itens.every((n) => n.lida), isTrue);
+      },
+    );
+
+    test(
+      'chat: envio repetido com o mesmo id e presença na conversa',
+      () async {
+        final dono = await _cadastrar('Dono Chat F4');
+        final visitante = await _cadastrar('Visita Chat F4');
+        final anuncio = await _publicar(dono);
+        final pedido = await visitante.repos.solicitacoes.solicitar(anuncio.id);
+        await dono.repos.solicitacoes.confirmar(pedido.id);
+
+        final id =
+            novoUuid(); // novo a cada execução (o banco guarda as anteriores)
+        final a = await visitante.repos.solicitacoes.enviarMensagem(
+          pedido.id,
+          'Levamos a bola',
+          idMensagem: id,
+        );
+        final b = await visitante.repos.solicitacoes.enviarMensagem(
+          pedido.id,
+          'Levamos a bola',
+          idMensagem: id,
+        );
+        expect([a.id, b.id], [id, id]);
+        expect(
+          await dono.repos.solicitacoes.mensagens(pedido.id),
+          hasLength(1),
+        );
+        await dono.repos.solicitacoes.marcarPresenca(pedido.id, aberta: false);
+
+        final avisos = (await dono.repos.notificacoes.listar()).itens.where(
+          (n) => n.tipo == TipoNotificacao.mensagemRecebida,
+        );
+        expect(avisos.map((n) => n.titulo), ['Nova mensagem']);
+        expect(avisos.single.mensagem, contains('Visita Chat F4'));
+        expect(avisos.single.mensagem, isNot(contains('bola')));
+      },
+    );
+
+    test(
+      'preferências de notificação: padrão, salvar e efeito no chat',
+      () async {
+        final dono = await _cadastrar('Dono Prefs F5');
+        final visitante = await _cadastrar('Visita Prefs F5');
+        final repo = dono.repos.notificacoes;
+        final padrao = await repo.preferencias();
+        expect(
+          [padrao.desafios, padrao.jogos, padrao.chat, padrao.lembretes],
+          [true, true, true, true],
+        );
+        final salvas = await repo.salvarPreferencias(
+          padrao.copiar(chat: false),
+        );
+        expect(salvas.chat, isFalse);
+        expect((await repo.preferencias()).chat, isFalse);
+
+        final anuncio = await _publicar(dono);
+        final pedido = await visitante.repos.solicitacoes.solicitar(anuncio.id);
+        await dono.repos.solicitacoes.confirmar(pedido.id);
+        await visitante.repos.solicitacoes.enviarMensagem(pedido.id, 'Oi');
+        final mensagem = (await repo.listar()).itens.firstWhere(
+          (n) => n.tipo == TipoNotificacao.mensagemRecebida,
+        );
+        expect(mensagem.lida, isTrue); // chat desativado: no histórico, já lida
+      },
+    );
   });
 }

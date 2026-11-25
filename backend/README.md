@@ -60,11 +60,82 @@ O `.env` é ignorado pelo Git. Variáveis: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_
 | GET `/partidas/minhas`, `/partidas/proxima`, `/partidas/:id` | participante | |
 | PATCH `/partidas/:id/cancelar` | participante | |
 | POST `/partidas/:id/avaliacoes` | participante | Só em partida realizada; todos os critérios ativos |
-| GET `/notificacoes`, PATCH `/notificacoes/:id/lida` | destinatário | |
+| GET `/notificacoes?pagina=&limite=` | destinatário | Central: mais recentes primeiro (limite 1–100, padrão 50). `meta`: `pagina`, `limite`, `temMais`, `total`, `naoLidas`. Sempre do capitão do token |
+| GET `/notificacoes/nao-lidas` | destinatário | `{ naoLidas, total }` (contador do sino; `total` só cresce com notificação nova) |
+| PATCH `/notificacoes/:id/lida` | destinatário | 204; repetir não é erro. De outra conta ou inexistente: 404 |
+| PATCH `/notificacoes/lidas` | destinatário | Marca todas: `{ marcadas, naoLidas: 0 }`. Não há exclusão: o histórico é preservado |
 
 Confirmar, recusar, cancelar e excluir chamam os procedimentos `proc_*` do banco, que têm transação própria e bloqueiam o anúncio. Não os chame dentro de `emTransacao`.
 
 O servidor executa `proc_expirar_anuncios` e `proc_marcar_partidas_realizadas` ao iniciar e a cada hora (`services/rotinas.ts`). Com `ROTINAS_PRESERVAR_ATE` definida, a rotina que tocaria um registro criado até essa data não é executada e o log registra um aviso; como os procedimentos são globais, ela fica suspensa também para os registros novos.
+
+## Notificações dos eventos
+
+Toda notificação é criada pelo backend, na mesma transação do evento (rota da API ou procedimento do banco): se o evento for desfeito, a notificação também é. Cada uma tem `chave_evento` (no máximo uma por evento e destinatário). Datas e horas no horário local do jogo (`fn_quando_texto` / `textoQuando`).
+
+| Evento | Quem recebe | Título | Ao tocar |
+|---|---|---|---|
+| Desafio enviado (`POST /solicitacoes`) | Dono do anúncio | Novo desafio recebido | Solicitação (aceitar/recusar) |
+| | Quem enviou (já lida) | Desafio enviado | Solicitação |
+| Aceite (`proc_confirmar_solicitacao`) | Desafiante | Desafio aceito! (adversário, data, hora, local, chat liberado) | Jogo |
+| | Dono que aceitou (já lida) | Partida confirmada | Jogo |
+| | Outros desafiantes do anúncio | Solicitação encerrada | Meus Desafios |
+| | Desafiante, por solicitação no mesmo horário encerrada | Solicitação encerrada por conflito de horário | Meus Desafios |
+| Recusa | Desafiante | Solicitação encerrada | Meus Desafios |
+| Anúncio removido ou expirado | Desafiantes pendentes | Solicitação encerrada | Meus Desafios |
+| Jogo cancelado (`proc_cancelar_partida`) | Outro capitão | Jogo cancelado (data, hora, motivo) | Jogo |
+| | Quem cancelou (já lida) | Jogo cancelado | Jogo |
+| Mensagem no chat | Outro capitão | Nova mensagem ("Você recebeu uma nova mensagem do time X.", sem o texto) | Conversa |
+
+"Já lida": registro no histórico de uma ação da própria pessoa, sem número no sino. Não há aviso à parte de "chat liberado": o "Desafio aceito!" já informa. Desistência (o desafiante cancela) e pausa de anúncio não geram aviso: a pausa é reversível e as solicitações continuam pendentes.
+
+## Lembretes de jogo e preferências
+
+**Lembretes** (`services/lembretes.ts`): 24 h, 2 h e 30 min antes, aos dois capitães, só de partidas `confirmada`, com adversário, hora local (UF do jogo) e local ("acontece amanhã às 21h, em Arena Biase"; "em", não "na", porque os nomes de local têm gênero variado). A API verifica a cada minuto as partidas confirmadas das próximas 24 h (índice `ind_partidas_rotina_status`) e grava em `lembretes_partidas` (chave: partida + tipo + horário de início) o que tratou: reiniciar a API não perde nem repete, vários servidores podem rodar juntos, cancelada não recebe. Janela perdida (jogo confirmado depois dela, ou API fora do ar) não é enviada atrasada: vale só o lembrete mais próximo do jogo e os anteriores ficam `pulado`. Nada é enviado depois do início. O horário de uma partida confirmada não muda hoje (o banco bloqueia); se um dia mudar, a chave inclui o horário e os lembretes seguem o novo. Respeita `ROTINAS_PRESERVAR_ATE`. Testes usam relógio injetado (`processarLembretes({ agora, apenasPartidas })`).
+
+**Preferências** (`GET`/`PUT /notificacoes/preferencias`, parcial: `{ desafios, jogos, chat, lembretes }`, padrão tudo ativo). Política: categoria desativada continua registrando no histórico, mas a notificação chega **já lida** (não conta no sino e não vira push). Aplicada pelo gatilho `gat_notificacoes_antes_inserir` (vale para a API e para os procedimentos). Avisos gerais (`aviso`) e os e-mails de segurança da conta (recuperação de senha) não dependem dessas opções. Não há preferência separada só de push: a permissão de notificações do Android já cumpre esse papel.
+
+| Categoria | Tipos |
+|---|---|
+| desafios | `solicitacao_recebida`, `solicitacao_enviada`, `solicitacao_recusada`, `solicitacao_encerrada` |
+| jogos | `partida_confirmada`, `partida_cancelada`, `avaliacao_pendente`, `anuncio_expirando` |
+| chat | `mensagem_recebida` |
+| lembretes | `lembrete_partida` |
+
+**Fila de push**: envios pendentes há mais de 24 h expiram (`ignorado`, sem apagar) a cada 10 min, mesmo com o push desligado, para a fila não crescer sem limite.
+
+## Notificações do chat
+
+- **Uma por mensagem e destinatário**, nunca ao remetente (`chave_evento = mensagem_recebida:<idMensagem>`). O texto da mensagem não vai na notificação nem no push.
+- **Envio repetível**: o app manda `idMensagem` (UUID gerado no aparelho) em `POST /solicitacoes/:id/mensagens`. Repetir a requisição (falha de conexão) devolve a mensagem já gravada (200), sem mensagem nem notificação duplicadas; o mesmo id em outra conversa ou de outro time: 409.
+- **Conversa aberta (presença)**: `GET /solicitacoes/:id/mensagens` (o app consulta a cada 4 s com a conversa na tela) grava em `conversas_abertas`; `PATCH /solicitacoes/:id/presenca { aberta }` avisa a saída (outra tela ou app em segundo plano). Se o destinatário está com a conversa aberta (último acesso < 12 s), a notificação é criada **já lida** (histórico, sem push); fora dela, não lida e com push. Limitação: se o app for encerrado à força com a conversa aberta, por até 12 s as mensagens novas dela não geram push (continuam como não lidas na lista de conversas).
+- **Leitura**: abrir a conversa marca as mensagens recebidas como visualizadas (regra existente) e os avisos de mensagem dessa conversa como lidos. Ler a notificação **não** marca a mensagem; nada é apagado.
+- **Em segundo plano** o app para de consultar a conversa: mensagens não são mais marcadas como visualizadas sem ninguém olhando.
+- **Push no aparelho**: mensagens da mesma conversa se substituem (etiqueta `chat-<idSolicitacao>`); com a conversa aberta no app, o aviso na tela é suprimido.
+- **Liberação**: "Desafio aceito!" já informa que o chat está liberado (sem aviso separado). Antes do aceite: 403; quem não participa: 404 (inclusive a presença).
+
+## Notificações push (Firebase Cloud Messaging)
+
+**Fluxo.** Toda notificação nova e **não lida** entra na fila `envios_push` pelo gatilho `gat_notificacoes_depois_inserir`, na mesma transação do evento (padrão outbox): evento desfeito, envio desfeito. A API processa a fila a cada `PUSH_INTERVALO_MS` (`services/push.ts`), fora da transação: uma falha do Firebase nunca desfaz o evento nem a notificação interna. Cada envio é reservado com `FOR UPDATE SKIP LOCKED` (vários servidores sem envio duplicado) e há uma linha por notificação (UNIQUE).
+
+**Regras de envio.** Só para aparelhos ativos e com permissão do destinatário; notificação já lida ou com mais de 24 h não vira push. Falha geral (rede, credencial, Firebase fora): nova tentativa em 10 s, 30 s, 2 min, 10 min e 30 min; depois `falhou`. Token inválido (`installation-id-not-registered` e afins): o aparelho é desativado. Usuário com mais de 500 aparelhos ativos: envio em lotes de 500 (limite do `sendEachForMulticast`). Com o push desligado (sem `FIREBASE_CREDENCIAIS`) a fila não é processada.
+
+**Conteúdo.** Título, texto e só identificadores em `data`: `idNotificacao`, `tipo`, `referenciaTipo` (`solicitacao`, `partida`, `anuncio`) e `referenciaId`. O app abre a tela, que busca os detalhes na API com a sessão (e a API confere a participação). Android: canal `joga_contra_avisos`, prioridade alta, `tag` = id da notificação (reenvio substitui, não duplica).
+
+| Rota | Uso |
+|---|---|
+| PUT `/dispositivos` | `{ token, plataforma, permitido, tokenAnterior? }`. Registra ou renova (idempotente). Token de outra conta passa para a conta logada; `tokenAnterior` é substituído. O token nunca volta nas respostas |
+| GET `/dispositivos` | Aparelhos da conta (sem token) |
+| PATCH `/dispositivos/desativar` | `{ token }`: sair da conta neste aparelho. 204 sempre (não revela de quem é o token) |
+| DELETE `/dispositivos/:id` | Remove o aparelho da conta: apaga o token, mantém o registro |
+
+Redefinir a senha desativa todos os aparelhos da conta (as sessões caem; o app registra de novo no próximo login).
+
+**Configuração (manual, uma vez).**
+1. Firebase Console > criar projeto > adicionar app **Android** com o pacote `com.jogacontra.joga_contra`.
+2. Baixar o `google-services.json` para `android/app/` e rodar `dart run tool/firebase_config.dart` (gera `android/app/src/main/res/values/firebase.xml`; os dois ficam fora do Git). Gerar o APK de novo.
+3. Configurações do projeto > Contas de serviço > Gerar nova chave privada. Salvar em `backend/credenciais/` (fora do Git) e apontar `FIREBASE_CREDENCIAIS` no `.env`. Reiniciar a API: o log mostra "Push (Firebase Cloud Messaging): ligado.".
+4. iOS (o projeto ainda não tem a pasta `ios`): criar o app iOS, chave APNs (.p8) no Firebase (Cloud Messaging > Configuração do app Apple), capacidades Push Notifications e Background Modes > Remote notifications no Xcode, e `GoogleService-Info.plist` em `ios/Runner/`.
 
 ## Recuperação de senha
 
@@ -99,4 +170,8 @@ O servidor executa `proc_expirar_anuncios` e `proc_marcar_partidas_realizadas` a
 
 - `npm test`: unitários, sem banco.
 - `npm run test:integracao` com `TESTE_INTEGRACAO=1`: fluxo completo com MySQL real. **Grava dados fictícios (`teste.homologacao.*@example.com`) que permanecem no banco.** Na porta 3306 exige também `TESTE_BANCO_REAL_AUTORIZADO=1`. Rode com `HORAS_PARTIDA_REALIZADA=0`. No banco real, exige `ROTINAS_PRESERVAR_ATE`: se algum registro preservado seria afetado, o cenário de rotinas é ignorado. Inclui `tests/recuperacao-senha.integracao.test.ts`, que envia os e-mails de verdade pelo Nodemailer para um servidor SMTP local (`tests/smtp-local.ts`); nenhum e-mail sai da máquina.
+- `npm run notificacao:teste -- teste.homologacao.xxx@example.com [chave]`: cria uma notificação de teste (tipo `aviso`) para uma **conta de teste** (recusa outras). Com a mesma chave, não cria de novo.
+- `tests/lembretes-preferencias.integracao.test.ts`: lembretes com relógio injetado (janelas, repetição, cancelada, fuso, servidor fora do ar, falha no push) e preferências.
+- `tests/chat-notificacoes.integracao.test.ts`: avisos de mensagem, envio repetido, presença na conversa, leitura e acesso.
+- `tests/push.integracao.test.ts`: dispositivos, fila de envio, falhas e tokens inválidos com um provedor de teste no lugar do Firebase (nada sai da máquina).
 - `npm run verify:email`: confere o login no Gmail (ou outro SMTP) com as variáveis do `.env`, sem enviar nada.

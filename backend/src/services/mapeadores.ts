@@ -111,6 +111,7 @@ export const mapearNotificacao = (r: Linha) => ({
   mensagem: r.mensagem,
   dataCriacao: dataIso(r.data_criacao),
   lida: r.data_leitura != null,
+  dataLeitura: dataIso(r.data_leitura),
   idAnuncio: r.id_anuncio,
   idSolicitacao: r.id_solicitacao,
   idPartida: r.id_partida,

@@ -46,6 +46,15 @@ describe('rotas protegidas', () => {
     ['post', '/api/solicitacoes'],
     ['get', '/api/partidas/minhas'],
     ['get', '/api/notificacoes'],
+    ['get', '/api/notificacoes/nao-lidas'],
+    ['get', '/api/dispositivos'],
+    ['get', '/api/notificacoes/preferencias'],
+    ['put', '/api/notificacoes/preferencias'],
+    ['put', '/api/dispositivos'],
+    ['patch', '/api/dispositivos/desativar'],
+    ['delete', '/api/dispositivos/7d0f6f5e-0000-4000-8000-000000000001'],
+    ['patch', '/api/notificacoes/lidas'],
+    ['patch', '/api/notificacoes/7d0f6f5e-0000-4000-8000-000000000001/lida'],
   ];
 
   it.each(protegidas)('%s %s exige token', async (metodo, caminho) => {

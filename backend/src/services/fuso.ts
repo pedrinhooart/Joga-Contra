@@ -110,3 +110,13 @@ export function sqlHorarioLocal(colunaInicio: string, colunaUf: string) {
     .join(' ');
   return `(${colunaInicio} + INTERVAL (CASE ${casos} ELSE -180 END) MINUTE)`;
 }
+
+/**
+ * Data e hora local para textos de notificação: "26/11 às 21h" ou "26/11 às 21h30".
+ * Mesmo formato de fn_quando_texto (database_v2/02_rotinas.sql).
+ */
+export function textoQuando(instante: Date, uf: string | null | undefined) {
+  const local = horarioLocal(instante, uf)!; // "2026-11-26T21:30:00"
+  const [dia, mes, hora, minuto] = [local.slice(8, 10), local.slice(5, 7), local.slice(11, 13), local.slice(14, 16)];
+  return `${dia}/${mes} às ${hora}h${minuto === '00' ? '' : minuto}`;
+}

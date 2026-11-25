@@ -64,22 +64,6 @@ export const dataIso = (valor: unknown): string | null =>
 /** Escapa curingas de LIKE vindos do usuário. */
 export const escaparLike = (texto: string) => texto.replace(/[\\%_]/g, '\\$&');
 
-type NovaNotificacao = {
-  idDestinatario: string;
-  tipo: 'solicitacao_recebida' | 'mensagem_recebida';
-  titulo: string;
-  mensagem: string;
-  idSolicitacao: string;
-};
-
-/** Notificações geradas pela API (as demais são criadas pelos procedimentos do banco). */
-export const criarNotificacao = (db: Executor, n: NovaNotificacao) =>
-  db.execute(
-    `INSERT INTO notificacoes (id_notificacao, id_usuario_destinatario, tipo, titulo, mensagem, id_solicitacao)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [uuid(), n.idDestinatario, n.tipo, n.titulo, n.mensagem.slice(0, 500), n.idSolicitacao],
-  );
-
 /** Todas as strings de um corpo JSON em NFC (acentos compostos), recursivamente. */
 export function normalizarTextos(valor: unknown): unknown {
   if (typeof valor === 'string') return valor.normalize('NFC');

@@ -7,9 +7,10 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "test": "vitest run",
-    "test:integracao": "vitest run tests/integracao.test.ts tests/recuperacao-senha.integracao.test.ts",
+    "test:integracao": "vitest run --no-file-parallelism --testTimeout=15000 tests/integracao.test.ts tests/recuperacao-senha.integracao.test.ts tests/notificacoes.integracao.test.ts tests/notificacoes-eventos.integracao.test.ts tests/push.integracao.test.ts tests/chat-notificacoes.integracao.test.ts tests/lembretes-preferencias.integracao.test.ts",
     "verify:db": "tsx src/scripts/verify-schema.ts",
     "verify:email": "tsx src/scripts/verify-email.ts",
+    "notificacao:teste": "tsx src/scripts/notificacao-teste.ts",
     "seed:reference": "tsx src/scripts/seed-reference.ts"
   },
   "dependencies": {
@@ -18,6 +19,7 @@
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
     "express-rate-limit": "^8.0.1",
+    "firebase-admin": "^14.5.1",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.14.4",

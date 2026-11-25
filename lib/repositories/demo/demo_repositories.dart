@@ -531,17 +531,18 @@ class DemoBanco {
       Notificacao(
         id: 'n1',
         tipo: TipoNotificacao.solicitacaoRecebida,
-        titulo: 'Tem rival querendo jogo!',
+        titulo: 'Novo desafio recebido',
         mensagem:
-            'O time Vila Nova Futsal demonstrou interesse no seu anúncio.',
+            'O time Vila Nova Futsal demonstrou interesse no seu jogo de sábado, no Campo do Ibirapuera.',
         dataCriacao: agora.subtract(const Duration(minutes: 5)),
         idSolicitacao: 's-vila',
       ),
       Notificacao(
         id: 'n2',
         tipo: TipoNotificacao.partidaConfirmada,
-        titulo: 'Pode chamar a equipe.',
-        mensagem: 'Sua partida contra o Real Amigos FC foi confirmada.',
+        titulo: 'Desafio aceito!',
+        mensagem:
+            'Seu desafio foi aceito! O jogo contra o time Real Amigos FC está confirmado. O chat com o outro capitão já está liberado.',
         dataCriacao: agora.subtract(const Duration(minutes: 30)),
         idPartida: 'p-confirmada',
       ),
@@ -561,6 +562,7 @@ class DemoBanco {
             'Atualize a disponibilidade para continuar encontrando adversários.',
         dataCriacao: agora.subtract(const Duration(days: 1)),
         idAnuncio: 'a-uniao',
+        lida: true,
       ),
     ]);
   }
@@ -1025,11 +1027,22 @@ class _DemoSolicitacoes implements SolicitacaoRepository {
   }
 
   @override
-  Future<Mensagem> enviarMensagem(String id, String texto) async {
+  Future<void> marcarPresenca(String id, {required bool aberta}) async {}
+
+  @override
+  Future<Mensagem> enviarMensagem(
+    String id,
+    String texto, {
+    String? idMensagem,
+  }) async {
     final i = _indice(id);
     _exigirChat(i);
+    final repetida = (db.mensagens[id] ?? const <Mensagem>[]).where(
+      (m) => idMensagem != null && m.id == idMensagem,
+    );
+    if (repetida.isNotEmpty) return repetida.first;
     final m = Mensagem(
-      id: db.novoId('m'),
+      id: idMensagem ?? db.novoId('m'),
       idSolicitacao: id,
       idTimeRemetente: db.meuTime.id,
       texto: texto,
@@ -1128,9 +1141,51 @@ class _DemoNotificacoes implements NotificacaoRepository {
   _DemoNotificacoes(this.db);
   final DemoBanco db;
   @override
-  Future<List<Notificacao>> listar() async => List.of(db.notificacoes);
+  Future<PaginaNotificacoes> listar({int pagina = 1, int limite = 20}) async {
+    final todas = [...db.notificacoes]
+      ..sort((a, b) => b.dataCriacao.compareTo(a.dataCriacao));
+    final inicio = (pagina - 1) * limite;
+    final itens = todas.skip(inicio).take(limite).toList();
+    return PaginaNotificacoes(
+      itens: itens,
+      temMais: inicio + itens.length < todas.length,
+      total: todas.length,
+      naoLidas: todas.where((n) => !n.lida).length,
+    );
+  }
+
   @override
-  Future<void> marcarComoLida(String id) async {}
+  Future<({int naoLidas, int total})> resumo() async => (
+    naoLidas: db.notificacoes.where((n) => !n.lida).length,
+    total: db.notificacoes.length,
+  );
+
+  @override
+  Future<void> marcarComoLida(String id) async {
+    final i = db.notificacoes.indexWhere((n) => n.id == id);
+    if (i >= 0) db.notificacoes[i] = db.notificacoes[i].comoLida();
+  }
+
+  PreferenciasNotificacoes _preferencias = const PreferenciasNotificacoes();
+
+  @override
+  Future<PreferenciasNotificacoes> preferencias() async => _preferencias;
+
+  @override
+  Future<PreferenciasNotificacoes> salvarPreferencias(
+    PreferenciasNotificacoes p,
+  ) async => _preferencias = p;
+
+  @override
+  Future<int> marcarTodasComoLidas() async {
+    var marcadas = 0;
+    for (var i = 0; i < db.notificacoes.length; i++) {
+      if (db.notificacoes[i].lida) continue;
+      db.notificacoes[i] = db.notificacoes[i].comoLida();
+      marcadas++;
+    }
+    return marcadas;
+  }
 }
 
 /// Demonstração: sem fonte real de locais, não sugere nada (nunca inventa).

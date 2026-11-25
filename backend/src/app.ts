@@ -8,6 +8,7 @@ import { anunciosRouter } from './routes/anuncios.js';
 import { normalizarTextos } from './services/helpers.js';
 import { armazenamento } from './services/armazenamento.js';
 import { authRouter } from './routes/auth.js';
+import { dispositivosRouter } from './routes/dispositivos.js';
 import { healthRouter } from './routes/health.js';
 import { locaisRouter } from './routes/locais.js';
 import { notificacoesRouter } from './routes/notificacoes.js';
@@ -84,6 +85,7 @@ export function createApp() {
   app.use('/api/solicitacoes', solicitacoesRouter);
   app.use('/api/partidas', partidasRouter);
   app.use('/api/notificacoes', notificacoesRouter);
+  app.use('/api/dispositivos', dispositivosRouter);
   app.use('/api/locais', locaisRouter);
   // Fora de /api: página aberta pelo link do e-mail e associação dos App Links.
   app.use(publicoRouter);

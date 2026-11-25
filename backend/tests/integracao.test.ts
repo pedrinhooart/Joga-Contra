@@ -716,7 +716,8 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
     for (const capitao of [perdedor1, perdedor2]) {
       const n = (await api(capitao).get('/notificacoes')).body.data.filter((x: any) => x.tipo === 'solicitacao_encerrada');
       expect(n).toHaveLength(1);
-      expect(n[0].mensagem).toContain('confirmou partida com outro time');
+      expect(n[0].titulo).toBe('Solicitação encerrada');
+      expect(n[0].mensagem).toContain('foi confirmado com outro time');
       expect(n[0].lida).toBe(false);
     }
     const doEscolhido = (await api(escolhido).get('/notificacoes')).body.data.map((n: any) => n.tipo);
@@ -858,7 +859,8 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
     expect(diferenca).toBeLessThan(2);
   });
 
-  describe('aceite: outras solicitações do desafiante no mesmo dia e horário', () => {
+  // Cada cenário cria ~10 contas (bcrypt custo 12 cada): folga acima dos 5 s padrão.
+  describe('aceite: outras solicitações do desafiante no mesmo dia e horário', { timeout: 15_000 }, () => {
     /** Data local (AAAA-MM-DD) daqui a `dias` dias. */
     const dia = (dias: number) => new Date(Date.now() + dias * 86_400_000).toISOString().slice(0, 10);
     const jogo = (dono: Capitao, local: string, uf = 'SP', cidade = 'São Paulo') =>
@@ -920,11 +922,12 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
       expect((porId.get(s.B.idSolicitacao) as any).motivoEncerramento).toMatch(/mesmo|neste dia e horário/);
       expect((porId.get(s.D.idSolicitacao) as any).motivoEncerramento).toBeNull();
 
-      // Avisos: o dono do anúncio perde o desafiante; o JOGA sabe o porquê.
+      // Aviso só ao time que teve as solicitações encerradas (fase 2 das
+      // notificações): o dono do anúncio B não é notificado.
       const avisoB = (await api(donoB).get('/notificacoes')).body.data.filter(
         (n: any) => n.tipo === 'solicitacao_encerrada' && n.idSolicitacao === s.B.idSolicitacao,
       );
-      expect(avisoB).toHaveLength(1);
+      expect(avisoB).toEqual([]);
       const avisosJoga = (await api(joga).get('/notificacoes')).body.data.filter(
         (n: any) => n.tipo === 'solicitacao_encerrada',
       );

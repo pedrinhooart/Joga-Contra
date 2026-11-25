@@ -28,6 +28,7 @@ Repositorios criarRepositoriosApi(
   solicitacoes: ApiSolicitacaoRepository(api),
   partidas: ApiPartidaRepository(api),
   notificacoes: ApiNotificacaoRepository(api),
+  dispositivos: ApiDispositivoRepository(api),
   locais: ApiLocalRepository(api),
 );
 
@@ -204,11 +205,21 @@ class ApiSolicitacaoRepository implements SolicitacaoRepository {
   Future<List<Mensagem>> mensagens(String id) async =>
       _lista(await _api.get('/solicitacoes/$id/mensagens'), Mensagem.fromJson);
   @override
-  Future<Mensagem> enviarMensagem(String id, String texto) async =>
-      Mensagem.fromJson(
-        await _api.post('/solicitacoes/$id/mensagens', {'texto': texto})
-            as _Json,
-      );
+  Future<Mensagem> enviarMensagem(
+    String id,
+    String texto, {
+    String? idMensagem,
+  }) async => Mensagem.fromJson(
+    await _api.post('/solicitacoes/$id/mensagens', {
+          'texto': texto,
+          'idMensagem': ?idMensagem,
+        })
+        as _Json,
+  );
+
+  @override
+  Future<void> marcarPresenca(String id, {required bool aberta}) =>
+      _api.patch('/solicitacoes/$id/presenca', {'aberta': aberta});
 }
 
 class ApiPartidaRepository implements PartidaRepository {
@@ -243,15 +254,78 @@ class ApiPartidaRepository implements PartidaRepository {
       );
 }
 
+class ApiDispositivoRepository implements DispositivoRepository {
+  ApiDispositivoRepository(this._api);
+  final ApiClient _api;
+
+  @override
+  Future<void> registrar({
+    required String token,
+    required String plataforma,
+    required bool permitido,
+    String? tokenAnterior,
+  }) => _api.put('/dispositivos', {
+    'token': token,
+    'plataforma': plataforma,
+    'permitido': permitido,
+    if (tokenAnterior != null && tokenAnterior != token)
+      'tokenAnterior': tokenAnterior,
+  });
+
+  @override
+  Future<void> desativar(String token) =>
+      _api.patch('/dispositivos/desativar', {'token': token});
+}
+
 class ApiNotificacaoRepository implements NotificacaoRepository {
   ApiNotificacaoRepository(this._api);
   final ApiClient _api;
   @override
-  Future<List<Notificacao>> listar() async =>
-      _lista(await _api.get('/notificacoes'), Notificacao.fromJson);
+  Future<PaginaNotificacoes> listar({int pagina = 1, int limite = 20}) async {
+    final r = await _api.getComMeta(
+      '/notificacoes',
+      query: {'pagina': pagina, 'limite': limite},
+    );
+    final itens = _lista(r.data, Notificacao.fromJson);
+    int numero(String campo) => (r.meta[campo] as num?)?.toInt() ?? 0;
+    return PaginaNotificacoes(
+      itens: itens,
+      temMais: r.meta['temMais'] as bool? ?? false,
+      total: numero('total'),
+      naoLidas: numero('naoLidas'),
+    );
+  }
+
+  @override
+  Future<({int naoLidas, int total})> resumo() async {
+    final json = await _api.get('/notificacoes/nao-lidas') as _Json;
+    return (
+      naoLidas: (json['naoLidas'] as num).toInt(),
+      total: (json['total'] as num).toInt(),
+    );
+  }
+
+  @override
+  Future<int> marcarTodasComoLidas() async =>
+      ((await _api.patch('/notificacoes/lidas') as _Json)['marcadas'] as num)
+          .toInt();
+
   @override
   Future<void> marcarComoLida(String id) =>
       _api.patch('/notificacoes/$id/lida');
+
+  @override
+  Future<PreferenciasNotificacoes> preferencias() async =>
+      PreferenciasNotificacoes.fromJson(
+        await _api.get('/notificacoes/preferencias') as _Json,
+      );
+
+  @override
+  Future<PreferenciasNotificacoes> salvarPreferencias(
+    PreferenciasNotificacoes p,
+  ) async => PreferenciasNotificacoes.fromJson(
+    await _api.put('/notificacoes/preferencias', p.toJson()) as _Json,
+  );
 }
 
 /// A API consulta a fonte externa (com cache); o app filtra a lista localmente.

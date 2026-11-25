@@ -254,6 +254,13 @@ authRouter.post(['/reset-password', '/redefinir-senha'], async (req, res) => {
         'UPDATE codigos_recuperacao_senha SET data_uso = UTC_TIMESTAMP(3) WHERE id_codigo = ? AND data_uso IS NULL',
         [estado.id_codigo],
       );
+      // As sessões caem; os aparelhos param de receber push desta conta até
+      // alguém entrar de novo neles (o app registra o aparelho a cada login).
+      await db.execute(
+        `UPDATE dispositivos_push SET ativo = 0, motivo_desativacao = 'senha_redefinida'
+          WHERE id_usuario = ? AND ativo = 1`,
+        [estado.id_usuario],
+      );
     }),
   );
   res.json({ data: { mensagem: 'Senha alterada. Entre com a nova senha.' } });

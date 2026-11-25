@@ -3,3 +3,6 @@ dist/
 .env
 coverage/
 arquivos/
+# Conta de serviço do Firebase (credencial do servidor): nunca no Git
+*firebase*adminsdk*.json
+credenciais/

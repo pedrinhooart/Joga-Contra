@@ -6,6 +6,7 @@ import '../models/notificacao.dart';
 import '../models/partida.dart';
 import '../models/referencia.dart';
 import '../models/usuario.dart';
+import '../repositories/contratos.dart';
 import '../services/api_client.dart';
 import '../services/municipios.dart';
 import '../state/app_state.dart';
@@ -513,107 +514,346 @@ class _ProfileStat extends StatelessWidget {
   );
 }
 
-class NotificationsScreen extends StatelessWidget {
-  const NotificationsScreen({super.key, required this.onOpen});
+/// Central de notificações: mais recentes primeiro, em páginas. Não lidas têm
+/// fundo e marcador próprios; tocar abre o conteúdo e marca como lida.
+class NotificationsScreen extends StatefulWidget {
+  const NotificationsScreen({
+    super.key,
+    required this.onOpen,
+    this.onPreferencias,
+  });
   final ValueChanged<Notificacao> onOpen;
+
+  /// Abre as preferências de notificação.
+  final VoidCallback? onPreferencias;
+
+  /// Tamanho de cada página pedida à API.
+  static const tamanhoPagina = 20;
+
+  @override
+  State<NotificationsScreen> createState() => _NotificationsScreenState();
+}
+
+class _NotificationsScreenState extends State<NotificationsScreen> {
+  final _itens = <Notificacao>[];
+  int _pagina = 0;
+  bool _temMais = false, _carregando = true, _carregandoMais = false;
+  bool _marcandoTodas = false;
+  String? _erro;
+
+  NotificacaoRepository get _repo => AppScope.repos(context).notificacoes;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _recarregar());
+  }
+
+  /// Primeira página de novo (abrir a tela, puxar para atualizar, tentar de novo).
+  Future<void> _recarregar() async {
+    setState(() {
+      _carregando = _itens.isEmpty;
+      _erro = null;
+    });
+    try {
+      final p = await _repo.listar(limite: NotificationsScreen.tamanhoPagina);
+      if (!mounted) return;
+      setState(() {
+        _itens
+          ..clear()
+          ..addAll(p.itens);
+        _pagina = 1;
+        _temMais = p.temMais;
+      });
+      AppScope.of(
+        context,
+      ).definirNotificacoesNaoLidas(p.naoLidas, total: p.total);
+    } catch (e) {
+      if (mounted) setState(() => _erro = '$e');
+    } finally {
+      if (mounted) setState(() => _carregando = false);
+    }
+  }
+
+  Future<void> _carregarMais() async {
+    setState(() => _carregandoMais = true);
+    try {
+      final p = await _repo.listar(
+        pagina: _pagina + 1,
+        limite: NotificationsScreen.tamanhoPagina,
+      );
+      if (!mounted) return;
+      final ids = _itens.map((n) => n.id).toSet();
+      setState(() {
+        // Sem repetir as que mudaram de página porque chegou uma nova.
+        _itens.addAll(p.itens.where((n) => !ids.contains(n.id)));
+        _pagina++;
+        _temMais = p.temMais;
+      });
+    } catch (e) {
+      if (mounted) _avisar(context, '$e');
+    } finally {
+      if (mounted) setState(() => _carregandoMais = false);
+    }
+  }
+
+  void _trocar(Notificacao lida) {
+    final i = _itens.indexWhere((n) => n.id == lida.id);
+    if (i >= 0) setState(() => _itens[i] = lida);
+  }
+
+  /// Abre o destino. A marcação vai para a API em seguida; se falhar, a
+  /// notificação volta a aparecer como não lida.
+  void _abrir(Notificacao n) {
+    if (!n.lida) _marcarLida(n);
+    widget.onOpen(n);
+  }
+
+  Future<void> _marcarLida(Notificacao n) async {
+    final app = AppScope.of(context);
+    final repo = _repo;
+    _trocar(n.comoLida());
+    app.definirNotificacoesNaoLidas(
+      (app.notificacoesNaoLidas - 1).clamp(0, 1 << 30),
+    );
+    try {
+      await repo.marcarComoLida(n.id);
+    } catch (_) {
+      if (mounted) _trocar(n);
+    }
+    // O valor da API prevalece (inclusive se a marcação falhou).
+    await app.atualizarNotificacoes();
+  }
+
+  Future<void> _marcarTodas() async {
+    final app = AppScope.of(context);
+    setState(() => _marcandoTodas = true);
+    try {
+      await _repo.marcarTodasComoLidas();
+      if (!mounted) return;
+      setState(() {
+        for (var i = 0; i < _itens.length; i++) {
+          if (!_itens[i].lida) _itens[i] = _itens[i].comoLida();
+        }
+      });
+      app.definirNotificacoesNaoLidas(0);
+      _avisar(context, 'Todas as notificações foram marcadas como lidas.');
+    } catch (e) {
+      if (mounted) _avisar(context, '$e');
+    } finally {
+      if (mounted) setState(() => _marcandoTodas = false);
+    }
+  }
 
   IconData _icone(TipoNotificacao t) => switch (t) {
     TipoNotificacao.partidaConfirmada => Icons.check,
     TipoNotificacao.mensagemRecebida ||
     TipoNotificacao.solicitacaoRecebida => Icons.chat_bubble_outline,
+    TipoNotificacao.solicitacaoEnviada => Icons.send_outlined,
+    TipoNotificacao.solicitacaoRecusada ||
+    TipoNotificacao.solicitacaoEncerrada => Icons.block,
+    TipoNotificacao.partidaCancelada => Icons.event_busy,
+    TipoNotificacao.lembretePartida => Icons.alarm,
     _ => Icons.notifications_none,
   };
 
   @override
   Widget build(BuildContext context) {
-    final repo = AppScope.repos(context).notificacoes;
-    return Carregador<List<Notificacao>>(
-      carregar: repo.listar,
-      builder: (context, lista, _) => ListView(
-        padding: const EdgeInsets.fromLTRB(18, 22, 18, 26),
+    const padding = EdgeInsets.fromLTRB(18, 22, 18, 26);
+    if (_carregando) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(40),
+          child: CircularProgressIndicator(color: AppColors.green),
+        ),
+      );
+    }
+    if (_erro != null && _itens.isEmpty) {
+      return ListView(
+        padding: padding,
+        children: [ErroCarregamento(mensagem: _erro!, onTentar: _recarregar)],
+      );
+    }
+    final naoLidas = AppScope.of(context).notificacoesNaoLidas;
+    return RefreshIndicator(
+      color: AppColors.green,
+      onRefresh: _recarregar,
+      child: ListView(
+        padding: padding,
+        physics: const AlwaysScrollableScrollPhysics(),
         children: [
           const PageTitle(
             'O jogo não para.',
             subtitle: 'Fique por dentro de tudo que acontece com o seu time.',
           ),
-          if (lista.isEmpty)
+          if (widget.onPreferencias != null)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: widget.onPreferencias,
+                icon: const Icon(Icons.tune, size: 18),
+                label: const Text('Preferências'),
+              ),
+            ),
+          if (_itens.isEmpty)
             const EmptyState(
               title: 'Tudo tranquilo por aqui.',
               message: 'Avisaremos quando houver novidades do seu time.',
             )
-          else
+          else ...[
+            // Em telas estreitas (ou com fonte grande) o botão desce de linha.
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  naoLidas == 0
+                      ? 'Nenhuma não lida'
+                      : naoLidas == 1
+                      ? '1 não lida'
+                      : '$naoLidas não lidas',
+                  style: const TextStyle(color: AppColors.muted, fontSize: 12),
+                ),
+                if (naoLidas > 0)
+                  TextButton(
+                    onPressed: _marcandoTodas ? null : _marcarTodas,
+                    child: Text(
+                      _marcandoTodas ? 'Marcando…' : 'Marcar todas como lidas',
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
             Panel(
               padding: EdgeInsets.zero,
               child: Column(
                 children: [
-                  for (var i = 0; i < lista.length; i++) ...[
-                    InkWell(
-                      onTap: () {
-                        if (!lista[i].lida) {
-                          // Falha ao marcar não deve impedir abrir o destino.
-                          repo.marcarComoLida(lista[i].id).catchError((_) {});
-                        }
-                        onOpen(lista[i]);
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: Row(
-                          children: [
-                            CircleAvatar(
-                              backgroundColor: const Color(0xFFEAF4E8),
-                              child: Icon(
-                                _icone(lista[i].tipo),
-                                size: 18,
-                                color: AppColors.green,
-                              ),
-                            ),
-                            const SizedBox(width: 11),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    lista[i].titulo,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  Text(
-                                    lista[i].mensagem,
-                                    style: const TextStyle(
-                                      color: AppColors.muted,
-                                      fontSize: 10,
-                                      height: 1.45,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    Formatos.relativo(lista[i].dataCriacao),
-                                    style: const TextStyle(
-                                      color: AppColors.muted,
-                                      fontSize: 9,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const Icon(
-                              Icons.chevron_right,
-                              size: 18,
-                              color: AppColors.muted,
-                            ),
-                          ],
-                        ),
-                      ),
+                  for (var i = 0; i < _itens.length; i++) ...[
+                    _ItemNotificacao(
+                      notificacao: _itens[i],
+                      icone: _icone(_itens[i].tipo),
+                      onTap: () => _abrir(_itens[i]),
                     ),
-                    if (i < lista.length - 1)
+                    if (i < _itens.length - 1)
                       const Divider(height: 1, indent: 14, endIndent: 14),
                   ],
                 ],
               ),
             ),
+            if (_temMais) ...[
+              const SizedBox(height: 12),
+              Center(
+                child: _carregandoMais
+                    ? const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: CircularProgressIndicator(
+                          color: AppColors.green,
+                        ),
+                      )
+                    : OutlinedButton(
+                        onPressed: _carregarMais,
+                        child: const Text('Ver notificações anteriores'),
+                      ),
+              ),
+            ],
+          ],
         ],
+      ),
+    );
+  }
+}
+
+class _ItemNotificacao extends StatelessWidget {
+  const _ItemNotificacao({
+    required this.notificacao,
+    required this.icone,
+    required this.onTap,
+  });
+  final Notificacao notificacao;
+  final IconData icone;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final n = notificacao;
+    final quando = n.dataCriacao;
+    return Semantics(
+      label: n.lida ? null : 'Não lida',
+      child: Material(
+        // Não lidas com fundo verde-claro, como os destaques do app.
+        color: n.lida ? Colors.transparent : const Color(0xFFF1F8EC),
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  backgroundColor: n.lida
+                      ? const Color(0xFFF0F2F0)
+                      : const Color(0xFFEAF4E8),
+                  child: Icon(
+                    icone,
+                    size: 18,
+                    color: n.lida ? AppColors.muted : AppColors.green,
+                  ),
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        n.titulo,
+                        style: TextStyle(
+                          fontWeight: n.lida
+                              ? FontWeight.w600
+                              : FontWeight.w800,
+                          fontSize: 12,
+                          color: n.lida ? AppColors.muted : AppColors.ink,
+                        ),
+                      ),
+                      Text(
+                        n.mensagem,
+                        style: const TextStyle(
+                          color: AppColors.muted,
+                          fontSize: 10,
+                          height: 1.45,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${Formatos.relativo(quando)} · '
+                        '${Formatos.dataNumerica(quando)} às ${Formatos.hora(quando)}',
+                        style: const TextStyle(
+                          color: AppColors.muted,
+                          fontSize: 9,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (!n.lida)
+                  Container(
+                    key: const ValueKey('marcador-nao-lida'),
+                    width: 9,
+                    height: 9,
+                    decoration: const BoxDecoration(
+                      color: AppColors.green,
+                      shape: BoxShape.circle,
+                    ),
+                  )
+                else
+                  const Icon(
+                    Icons.chevron_right,
+                    size: 18,
+                    color: AppColors.muted,
+                  ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1700,4 +1940,126 @@ class _RedefinirSenhaScreenState extends State<RedefinirSenhaScreen> {
       if (mounted) setState(() => enviando = false);
     }
   }
+}
+
+/// Preferências de notificação por categoria. Salva a cada toque; se a API
+/// falhar, a opção volta ao que era.
+class PreferenciasNotificacoesScreen extends StatefulWidget {
+  const PreferenciasNotificacoesScreen({super.key});
+
+  @override
+  State<PreferenciasNotificacoesScreen> createState() =>
+      _PreferenciasNotificacoesScreenState();
+}
+
+class _PreferenciasNotificacoesScreenState
+    extends State<PreferenciasNotificacoesScreen> {
+  PreferenciasNotificacoes? _atuais;
+  bool _salvando = false;
+
+  Future<void> _alterar(PreferenciasNotificacoes novas) async {
+    final antes = _atuais;
+    setState(() {
+      _atuais = novas;
+      _salvando = true;
+    });
+    try {
+      final salvas = await AppScope.repos(
+        context,
+      ).notificacoes.salvarPreferencias(novas);
+      if (mounted) setState(() => _atuais = salvas);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _atuais = antes);
+      _avisar(context, '$e');
+    } finally {
+      if (mounted) setState(() => _salvando = false);
+    }
+  }
+
+  Widget _opcao(
+    String titulo,
+    String descricao,
+    bool valor,
+    PreferenciasNotificacoes Function(bool) mudar,
+  ) => SwitchListTile(
+    value: valor,
+    onChanged: _salvando ? null : (v) => _alterar(mudar(v)),
+    activeThumbColor: AppColors.green,
+    title: Text(
+      titulo,
+      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+    ),
+    subtitle: Text(
+      descricao,
+      style: const TextStyle(color: AppColors.muted, fontSize: 11),
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) => Carregador<PreferenciasNotificacoes>(
+    carregar: () async =>
+        _atuais ??= await AppScope.repos(context).notificacoes.preferencias(),
+    builder: (context, _, _) {
+      final p = _atuais!;
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(18, 22, 18, 26),
+        children: [
+          const PageTitle(
+            'Do seu jeito.',
+            subtitle: 'Escolha sobre o que o Joga Contra deve te avisar.',
+          ),
+          Panel(
+            padding: EdgeInsets.zero,
+            // Material próprio: o efeito de toque das opções aparece sobre o painel.
+            child: Material(
+              type: MaterialType.transparency,
+              child: Column(
+                children: [
+                  _opcao(
+                    'Desafios',
+                    'Desafio recebido, recusado ou encerrado.',
+                    p.desafios,
+                    (v) => p.copiar(desafios: v),
+                  ),
+                  const Divider(height: 1),
+                  _opcao(
+                    'Jogos',
+                    'Desafio aceito, jogo cancelado e avaliação.',
+                    p.jogos,
+                    (v) => p.copiar(jogos: v),
+                  ),
+                  const Divider(height: 1),
+                  _opcao(
+                    'Chat',
+                    'Novas mensagens dos capitães.',
+                    p.chat,
+                    (v) => p.copiar(chat: v),
+                  ),
+                  const Divider(height: 1),
+                  _opcao(
+                    'Lembretes de jogo',
+                    '24 horas, 2 horas e 30 minutos antes.',
+                    p.lembretes,
+                    (v) => p.copiar(lembretes: v),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Desativadas, as notificações continuam no histórico, mas '
+            'chegam como lidas: não contam no sino nem aparecem no celular. '
+            'Avisos sobre a segurança da sua conta continuam chegando.',
+            style: TextStyle(
+              color: AppColors.muted,
+              fontSize: 11,
+              height: 1.45,
+            ),
+          ),
+        ],
+      );
+    },
+  );
 }

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ícone pequeno das notificações (barra de status): uma bola, em branco.
+     O Android usa só o formato; a cor de destaque vem do AndroidManifest. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M12,2A10,10 0 1,1 12,22A10,10 0 1,1 12,2ZM12,7.2L8.6,9.7L9.9,13.7L14.1,13.7L15.4,9.7ZM12,4.1L12,5.6L15.9,8.4L17.5,7.9A8,8 0 0,0 12,4.1ZM6.5,7.9L8.1,8.4L12,5.6L12,4.1A8,8 0 0,0 6.5,7.9ZM5.1,10.6A8,8 0 0,0 6.3,16.7L7.2,15.3L5.9,11.2ZM18.1,11.2L16.8,15.3L17.7,16.7A8,8 0 0,0 18.9,10.6ZM9.3,15.7L8.4,17.1A8,8 0 0,0 15.6,17.1L14.7,15.7Z" />
+</vector>

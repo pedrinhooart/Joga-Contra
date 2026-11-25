@@ -454,9 +454,12 @@ CREATE TABLE notificacoes (
   id_anuncio              CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL,
   id_solicitacao          CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL,
   id_partida              CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  chave_evento            VARCHAR(150) CHARACTER SET ascii COLLATE ascii_bin NULL
+    COMMENT 'Evento de origem (ex.: mensagem_recebida:<id>). Garante uma notificação por evento e destinatário.',
   data_leitura            DATETIME(3) NULL,
   data_criacao            DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id_notificacao),
+  CONSTRAINT un_notificacoes_evento UNIQUE (id_usuario_destinatario, chave_evento),
   CONSTRAINT ce_notificacoes_usuarios FOREIGN KEY (id_usuario_destinatario) REFERENCES usuarios (id_usuario),
   CONSTRAINT ce_notificacoes_anuncios_partidas FOREIGN KEY (id_anuncio) REFERENCES anuncios_partidas (id_anuncio),
   CONSTRAINT ce_notificacoes_solicitacoes_confronto FOREIGN KEY (id_solicitacao) REFERENCES solicitacoes_confronto (id_solicitacao),
@@ -464,11 +467,101 @@ CREATE TABLE notificacoes (
   CONSTRAINT vr_notificacoes_id CHECK (REGEXP_LIKE(id_notificacao, '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', 'c')),
   CONSTRAINT vr_notificacoes_tipo CHECK (tipo IN (
     'solicitacao_recebida', 'mensagem_recebida', 'partida_confirmada', 'partida_cancelada',
-    'solicitacao_encerrada', 'solicitacao_recusada', 'anuncio_expirando', 'avaliacao_pendente')),
+    'solicitacao_encerrada', 'solicitacao_recusada', 'anuncio_expirando', 'avaliacao_pendente',
+    'aviso', 'solicitacao_enviada', 'lembrete_partida')),
   CONSTRAINT vr_notificacoes_titulo CHECK (CHAR_LENGTH(TRIM(titulo)) > 0),
   CONSTRAINT vr_notificacoes_referencia_unica CHECK (
     (id_anuncio IS NOT NULL) + (id_solicitacao IS NOT NULL) + (id_partida IS NOT NULL) <= 1),
   CONSTRAINT vr_notificacoes_leitura CHECK (data_leitura IS NULL OR data_leitura >= data_criacao),
-  INDEX ind_notificacoes_destinatario (id_usuario_destinatario, data_leitura, data_criacao)
+  INDEX ind_notificacoes_destinatario (id_usuario_destinatario, data_leitura, data_criacao),
+  INDEX ind_notificacoes_lista (id_usuario_destinatario, data_criacao, id_notificacao)
 ) ENGINE = InnoDB
   COMMENT = 'Alertas para os capitães.';
+
+-- Push (Firebase Cloud Messaging): aparelhos e fila de envio (outbox).
+CREATE TABLE dispositivos_push (
+  id_dispositivo         CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  id_usuario             CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  token_fcm              VARCHAR(512) CHARACTER SET ascii COLLATE ascii_bin NULL
+    COMMENT 'Token do Firebase Cloud Messaging. NULL depois de removido.',
+  plataforma             VARCHAR(10) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  permissao_notificacoes TINYINT(1) NOT NULL DEFAULT 1
+    COMMENT 'O capitão autorizou notificações no aparelho (Android 13+ e iOS pedem).',
+  ativo                  TINYINT(1) NOT NULL DEFAULT 1,
+  motivo_desativacao     VARCHAR(40) NULL,
+  data_criacao           DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  data_atualizacao       DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  data_ultimo_uso        DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    COMMENT 'Último registro do token pelo app (abertura com sessão).',
+  data_ultimo_envio      DATETIME(3) NULL,
+  PRIMARY KEY (id_dispositivo),
+  CONSTRAINT un_dispositivos_push_token UNIQUE (token_fcm),
+  CONSTRAINT ce_dispositivos_push_usuarios FOREIGN KEY (id_usuario) REFERENCES usuarios (id_usuario),
+  CONSTRAINT vr_dispositivos_push_id CHECK (REGEXP_LIKE(id_dispositivo, '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
+, 'c')),
+  CONSTRAINT vr_dispositivos_push_plataforma CHECK (plataforma IN ('android', 'ios', 'web')),
+  CONSTRAINT vr_dispositivos_push_ativo_token CHECK (ativo = 0 OR token_fcm IS NOT NULL),
+  CONSTRAINT vr_dispositivos_push_motivo CHECK ((ativo = 1) = (motivo_desativacao IS NULL)),
+  INDEX ind_dispositivos_push_usuario (id_usuario, ativo)
+) ENGINE = InnoDB
+  COMMENT = 'Aparelhos que recebem notificações push.';
+
+CREATE TABLE envios_push (
+  id_envio              CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  id_notificacao        CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  status                VARCHAR(12) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'pendente',
+  tentativas            TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  proxima_tentativa     DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    COMMENT 'Pendente: quando tentar. Enviando: fim da reserva (se o servidor cair, volta para a fila).',
+  dispositivos_enviados SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  ultimo_erro           VARCHAR(200) NULL COMMENT 'Código do erro, sem token nem conteúdo.',
+  data_criacao          DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  data_atualizacao      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  data_conclusao        DATETIME(3) NULL,
+  PRIMARY KEY (id_envio),
+  CONSTRAINT un_envios_push_notificacao UNIQUE (id_notificacao),
+  CONSTRAINT ce_envios_push_notificacoes FOREIGN KEY (id_notificacao) REFERENCES notificacoes (id_notificacao),
+  CONSTRAINT vr_envios_push_id CHECK (REGEXP_LIKE(id_envio, '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
+, 'c')),
+  CONSTRAINT vr_envios_push_status CHECK (status IN ('pendente', 'enviando', 'enviado', 'falhou', 'ignorado')),
+  INDEX ind_envios_push_fila (status, proxima_tentativa)
+) ENGINE = InnoDB
+  COMMENT = 'Fila de envio das notificações push (outbox).';
+
+-- Presença no chat (notificações da fase 4).
+CREATE TABLE conversas_abertas (
+  id_usuario          CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  id_solicitacao      CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  aberta              TINYINT(1) NOT NULL DEFAULT 1,
+  data_ultimo_acesso  DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id_usuario, id_solicitacao),
+  CONSTRAINT ce_conversas_abertas_usuarios FOREIGN KEY (id_usuario) REFERENCES usuarios (id_usuario),
+  CONSTRAINT ce_conversas_abertas_solicitacoes FOREIGN KEY (id_solicitacao) REFERENCES solicitacoes_confronto (id_solicitacao)
+) ENGINE = InnoDB
+  COMMENT = 'Presença no chat: conversa aberta na tela de cada capitão (evita push para quem está lendo).';
+
+-- Lembretes de jogo e preferências de notificação (fase 5).
+CREATE TABLE lembretes_partidas (
+  id_partida        CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  tipo              VARCHAR(5) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  data_hora_inicio  DATETIME(3) NOT NULL COMMENT 'Início (UTC) considerado no lembrete.',
+  status            VARCHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  data_processamento DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id_partida, tipo, data_hora_inicio),
+  CONSTRAINT ce_lembretes_partidas_partidas FOREIGN KEY (id_partida) REFERENCES partidas (id_partida),
+  CONSTRAINT vr_lembretes_partidas_tipo CHECK (tipo IN ('24h', '2h', '30min')),
+  CONSTRAINT vr_lembretes_partidas_status CHECK (status IN ('enviado', 'pulado'))
+) ENGINE = InnoDB
+  COMMENT = 'Lembretes de jogo já tratados (garante um por partida, tipo e horário).';
+
+CREATE TABLE preferencias_notificacoes (
+  id_usuario        CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  desafios          TINYINT(1) NOT NULL DEFAULT 1,
+  jogos             TINYINT(1) NOT NULL DEFAULT 1,
+  chat              TINYINT(1) NOT NULL DEFAULT 1,
+  lembretes         TINYINT(1) NOT NULL DEFAULT 1,
+  data_atualizacao  DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id_usuario),
+  CONSTRAINT ce_preferencias_notificacoes_usuarios FOREIGN KEY (id_usuario) REFERENCES usuarios (id_usuario)
+) ENGINE = InnoDB
+  COMMENT = 'Categorias de notificação de cada capitão (sem linha = todas ativas).';

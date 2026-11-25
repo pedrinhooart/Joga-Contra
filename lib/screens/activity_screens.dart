@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../core/formatters.dart';
+import '../core/uuid.dart';
 import '../models/anuncio_partida.dart';
 import '../models/local_esportivo.dart';
 import '../models/partida.dart';
@@ -677,26 +678,61 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final input = TextEditingController();
   final mensagens = <Mensagem>[];
   bool enviando = false;
 
   /// Com a conversa aberta, busca de novo a cada poucos segundos: traz as
   /// mensagens novas, marca as recebidas como visualizadas e atualiza os
-  /// indicadores das enviadas (entregue/visualizada).
+  /// indicadores das enviadas (entregue/visualizada). Cada busca também diz à
+  /// API que a conversa está na tela (sem push para mensagens dela).
   static const intervaloAtualizacao = Duration(seconds: 4);
   Timer? _atualizacao;
+  bool _chatLiberado = false;
+  late final _repo = AppScope.repos(context).solicitacoes;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _atualizacao?.cancel();
+    if (_chatLiberado) _avisarSaida();
     input.dispose();
     super.dispose();
   }
 
+  /// Em segundo plano a conversa não está sendo vista: para de buscar (não
+  /// marca como visualizadas mensagens que ninguém viu) e as novas geram push.
+  /// Ao voltar, busca na hora e retoma.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!_chatLiberado) return;
+    if (state == AppLifecycleState.resumed) {
+      _atualizar();
+      _atualizacao?.cancel();
+      _atualizacao = Timer.periodic(intervaloAtualizacao, (_) => _atualizar());
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      if (_atualizacao == null) return;
+      _atualizacao?.cancel();
+      _atualizacao = null;
+      _avisarSaida();
+    }
+  }
+
+  void _avisarSaida() => _repo
+      .marcarPresenca(widget.idSolicitacao, aberta: false)
+      .catchError((_) {}); // sem conexão: a presença vence sozinha em 12 s
+
   Future<SolicitacaoConfronto> _carregar() async {
-    final repo = AppScope.repos(context).solicitacoes;
+    final repo =
+        _repo; // resolvido aqui (dispose não pode consultar o contexto)
     final s = await repo.obter(widget.idSolicitacao);
     // Antes do aceite não há chat: nem pede as mensagens (a API recusaria).
     final lista = s.chatLiberado
@@ -706,6 +742,7 @@ class _ChatScreenState extends State<ChatScreen> {
       ..clear()
       ..addAll(lista);
     _atualizacao?.cancel();
+    _chatLiberado = s.chatLiberado;
     if (s.chatLiberado) {
       _atualizacao = Timer.periodic(intervaloAtualizacao, (_) => _atualizar());
     }
@@ -971,17 +1008,26 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  /// Envio que falhou: tentar de novo com o mesmo texto reaproveita o id, e a
+  /// API não duplica a mensagem se a primeira tentativa tiver chegado.
+  (String, String)? _pendente;
+
   Future<void> _send() async {
     final texto = input.text.trim();
     if (texto.isEmpty) return;
+    final idMensagem = _pendente?.$1 == texto ? _pendente!.$2 : novoUuid();
+    _pendente = (texto, idMensagem);
     setState(() => enviando = true);
     try {
-      final m = await AppScope.repos(
-        context,
-      ).solicitacoes.enviarMensagem(widget.idSolicitacao, texto);
+      final m = await AppScope.repos(context).solicitacoes.enviarMensagem(
+        widget.idSolicitacao,
+        texto,
+        idMensagem: idMensagem,
+      );
+      _pendente = null;
       if (!mounted) return;
       setState(() {
-        mensagens.add(m);
+        if (!mensagens.any((x) => x.id == m.id)) mensagens.add(m);
         input.clear();
       });
     } catch (e) {

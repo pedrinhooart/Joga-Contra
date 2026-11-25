@@ -317,9 +317,44 @@ BEGIN
   IF NOT (OLD.id_usuario_destinatario <=> NEW.id_usuario_destinatario) OR NOT (OLD.tipo <=> NEW.tipo)
      OR NOT (OLD.titulo <=> NEW.titulo) OR NOT (OLD.mensagem <=> NEW.mensagem)
      OR NOT (OLD.id_anuncio <=> NEW.id_anuncio) OR NOT (OLD.id_solicitacao <=> NEW.id_solicitacao)
-     OR NOT (OLD.id_partida <=> NEW.id_partida)
+     OR NOT (OLD.id_partida <=> NEW.id_partida) OR NOT (OLD.chave_evento <=> NEW.chave_evento)
      OR (OLD.data_leitura IS NOT NULL AND NOT (OLD.data_leitura <=> NEW.data_leitura)) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Notificações são imutáveis; apenas a leitura pode ser registrada.';
+  END IF;
+END$$
+
+-- Categoria desativada pelo destinatário: registra já lida (histórico, sem
+-- contar no sino e sem push). Vale para as notificações da API e dos procedimentos.
+CREATE TRIGGER gat_notificacoes_antes_inserir
+BEFORE INSERT ON notificacoes FOR EACH ROW
+BEGIN
+  DECLARE v_categoria VARCHAR(10) DEFAULT CASE
+    WHEN NEW.tipo IN ('solicitacao_recebida', 'solicitacao_enviada', 'solicitacao_recusada', 'solicitacao_encerrada')
+      THEN 'desafios'
+    WHEN NEW.tipo IN ('partida_confirmada', 'partida_cancelada', 'avaliacao_pendente', 'anuncio_expirando')
+      THEN 'jogos'
+    WHEN NEW.tipo = 'mensagem_recebida' THEN 'chat'
+    WHEN NEW.tipo = 'lembrete_partida' THEN 'lembretes'
+    ELSE NULL
+  END;
+  IF v_categoria IS NOT NULL AND NEW.data_leitura IS NULL AND EXISTS (
+      SELECT 1 FROM preferencias_notificacoes p
+       WHERE p.id_usuario = NEW.id_usuario_destinatario
+         AND ((v_categoria = 'desafios' AND p.desafios = 0) OR (v_categoria = 'jogos' AND p.jogos = 0)
+           OR (v_categoria = 'chat' AND p.chat = 0) OR (v_categoria = 'lembretes' AND p.lembretes = 0))) THEN
+    SET NEW.data_leitura = NEW.data_criacao;
+  END IF;
+END$$
+
+-- Toda notificação nova ainda não lida entra na fila de push, na mesma
+-- transação que a criou. As já lidas (registro de uma ação da própria pessoa)
+-- não geram push.
+CREATE TRIGGER gat_notificacoes_depois_inserir
+AFTER INSERT ON notificacoes FOR EACH ROW
+BEGIN
+  IF NEW.data_leitura IS NULL THEN
+    INSERT INTO envios_push (id_envio, id_notificacao, proxima_tentativa, data_criacao)
+    VALUES (UUID(), NEW.id_notificacao, NEW.data_criacao, NEW.data_criacao);
   END IF;
 END$$
 
@@ -344,6 +379,21 @@ RETURN DATE_FORMAT(
   END HOUR),
   '%Y-%m-%d %H:%i')$$
 
+-- Data e hora local para os textos das notificações: '26/11 às 21h' ou
+-- '26/11 às 21h30'. Mesmo formato de textoQuando() em backend/src/services/fuso.ts.
+CREATE FUNCTION fn_quando_texto(
+  p_inicio DATETIME(3),
+  p_uf     CHAR(2) CHARACTER SET ascii COLLATE ascii_bin)
+RETURNS VARCHAR(20) CHARACTER SET utf8mb4
+DETERMINISTIC NO SQL
+BEGIN
+  -- utf8mb4: o texto final tem acento (' às ').
+  DECLARE v_local VARCHAR(16) CHARACTER SET utf8mb4 DEFAULT fn_inicio_local(p_inicio, p_uf);
+  RETURN CONCAT(SUBSTRING(v_local, 9, 2), '/', SUBSTRING(v_local, 6, 2), ' às ',
+                SUBSTRING(v_local, 12, 2), 'h',
+                IF(SUBSTRING(v_local, 15, 2) = '00', '', SUBSTRING(v_local, 15, 2)));
+END$$
+
 -- =============================================================================
 -- Procedimentos transacionais
 -- =============================================================================
@@ -356,8 +406,15 @@ RETURN DATE_FORMAT(
 -- Mesmo dia e horário (23/11/2026): o time desafiante não joga duas partidas ao
 -- mesmo tempo. Na mesma transação, as OUTRAS solicitações pendentes dele para
 -- jogos com a mesma data e hora local de início (fn_inicio_local) são
--- encerradas — nunca a aceita, nunca as de outros times, nunca apagadas — e os
--- donos desses anúncios e o próprio capitão desafiante são avisados.
+-- encerradas — nunca a aceita, nunca as de outros times, nunca apagadas — e só
+-- o capitão desafiante (o time que teve as solicitações encerradas) é avisado.
+--
+-- Notificações (25/11/2026), todas na mesma transação e com chave_evento (uma
+-- por evento e destinatário): "Desafio aceito!" ao desafiante, com adversário,
+-- data, hora, local e a liberação do chat (não há aviso separado de chat);
+-- "Partida confirmada" ao anunciante, já lida (foi ele quem aceitou);
+-- "Solicitação encerrada" aos outros desafiantes do anúncio e "Solicitação
+-- encerrada por conflito de horário" ao desafiante, uma por solicitação.
 --
 -- Concorrência: 1º o time desafiante é bloqueado (FOR UPDATE), serializando os
 -- aceites de desafios do mesmo time — de dois aceites simultâneos para o mesmo
@@ -395,6 +452,8 @@ BEGIN
   DECLARE v_capitao_solicitante CHAR(36) CHARACTER SET ascii COLLATE ascii_bin;
   DECLARE v_id_partida CHAR(36) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL;
   DECLARE v_agora DATETIME(3) DEFAULT UTC_TIMESTAMP(3);
+  DECLARE v_quando VARCHAR(20);
+  DECLARE v_local VARCHAR(200);
 
   DECLARE EXIT HANDLER FOR SQLEXCEPTION
   BEGIN
@@ -418,8 +477,9 @@ BEGIN
     FOR UPDATE;
 
   -- 2º bloqueio: anúncio.
-  SELECT status, data_hora_inicio, sigla_estado, data_exclusao
-    INTO v_status_anuncio, v_inicio, v_uf, v_exclusao
+  SELECT status, data_hora_inicio, sigla_estado, data_exclusao,
+         COALESCE(NULLIF(TRIM(nome_local), ''), cidade)
+    INTO v_status_anuncio, v_inicio, v_uf, v_exclusao, v_local
     FROM anuncios_partidas WHERE id_anuncio = v_id_anuncio
     FOR UPDATE;
 
@@ -483,14 +543,16 @@ BEGIN
     -- c) anúncio indisponível
     UPDATE anuncios_partidas SET status = 'encerrado' WHERE id_anuncio = v_id_anuncio;
 
+    SET v_quando = fn_quando_texto(v_inicio, v_uf);
+
     -- d) alerta aos capitães cujas solicitações serão encerradas
     INSERT INTO notificacoes (id_notificacao, id_usuario_destinatario, tipo, titulo, mensagem,
-                              id_solicitacao, data_criacao)
+                              id_solicitacao, chave_evento, data_criacao)
     SELECT UUID(), t.id_capitao, 'solicitacao_encerrada',
-           'Esse jogo já tem adversário.',
-           LEFT(CONCAT('O anúncio de ', v_nome_anunciante,
-                       ' confirmou partida com outro time. Sua solicitação foi encerrada.'), 500),
-           s.id_solicitacao, v_agora
+           'Solicitação encerrada',
+           LEFT(CONCAT('Sua solicitação para jogar contra o time ', v_nome_anunciante,
+                       ' foi encerrada: o jogo de ', v_quando, ' foi confirmado com outro time.'), 500),
+           s.id_solicitacao, CONCAT('solicitacao_encerrada:', s.id_solicitacao), v_agora
       FROM solicitacoes_confronto s
       JOIN times t ON t.id_time = s.id_time_solicitante
      WHERE s.id_anuncio = v_id_anuncio AND s.status = 'pendente'
@@ -525,24 +587,16 @@ BEGIN
          AND id_solicitacao <> p_id_solicitacao
          AND id_solicitacao MEMBER OF (v_mesmo_horario);
 
-      -- Avisos: o dono de cada anúncio perde o desafiante; o capitão
-      -- desafiante entende por que os outros pedidos saíram dos pendentes.
+      -- Aviso só ao time que teve as solicitações encerradas (uma por
+      -- solicitação efetivamente encerrada agora).
       INSERT INTO notificacoes (id_notificacao, id_usuario_destinatario, tipo, titulo, mensagem,
-                                id_solicitacao, data_criacao)
-      SELECT UUID(), ta.id_capitao, 'solicitacao_encerrada', 'Desafio retirado.',
-             LEFT(CONCAT(v_nome_solicitante, ' confirmou outra partida no mesmo dia e horário. ',
-                         'A solicitação para o seu jogo foi encerrada.'), 500),
-             s.id_solicitacao, v_agora
-        FROM solicitacoes_confronto s
-        JOIN times ta ON ta.id_time = s.id_time_anunciante
-       WHERE s.id_solicitacao MEMBER OF (v_mesmo_horario)
-         AND s.status = 'encerrada' AND s.data_resposta = v_agora
-         AND s.motivo_encerramento = v_motivo_horario
-      UNION ALL
-      SELECT UUID(), v_capitao_solicitante, 'solicitacao_encerrada', 'Desafio encerrado.',
-             LEFT(CONCAT('Vocês já jogam contra ', v_nome_anunciante, ' nesse dia e horário. ',
-                         'O desafio para o jogo de ', ta.nome, ' foi encerrado.'), 500),
-             s.id_solicitacao, v_agora
+                                id_solicitacao, chave_evento, data_criacao)
+      SELECT UUID(), v_capitao_solicitante, 'solicitacao_encerrada',
+             'Solicitação encerrada por conflito de horário',
+             LEFT(CONCAT('Como seu desafio contra o time ', v_nome_anunciante, ' foi confirmado para ',
+                         v_quando, ', sua solicitação para o jogo do time ', ta.nome,
+                         ' nesse mesmo horário foi encerrada.'), 500),
+             s.id_solicitacao, CONCAT('solicitacao_encerrada:', s.id_solicitacao), v_agora
         FROM solicitacoes_confronto s
         JOIN times ta ON ta.id_time = s.id_time_anunciante
        WHERE s.id_solicitacao MEMBER OF (v_mesmo_horario)
@@ -550,14 +604,23 @@ BEGIN
          AND s.motivo_encerramento = v_motivo_horario;
     END IF;
 
-    -- f) aviso aos dois capitães envolvidos
+    -- f) aviso aos dois capitães envolvidos. O texto já informa que o chat foi
+    --    liberado (a conversa abre com a solicitação confirmada), sem aviso à
+    --    parte. Quem deu o aceite recebe o seu já lido: registro no histórico,
+    --    sem contar como novidade.
     INSERT INTO notificacoes (id_notificacao, id_usuario_destinatario, tipo, titulo, mensagem,
-                              id_partida, data_criacao)
+                              id_partida, chave_evento, data_criacao, data_leitura)
     VALUES
-      (UUID(), v_capitao_anunciante, 'partida_confirmada', 'Pode chamar a equipe.',
-       LEFT(CONCAT('Sua partida contra ', v_nome_solicitante, ' foi confirmada.'), 500), v_id_partida, v_agora),
-      (UUID(), v_capitao_solicitante, 'partida_confirmada', 'Pode chamar a equipe.',
-       LEFT(CONCAT('Sua partida contra ', v_nome_anunciante, ' foi confirmada.'), 500), v_id_partida, v_agora);
+      (UUID(), v_capitao_solicitante, 'partida_confirmada', 'Desafio aceito!',
+       LEFT(CONCAT('Seu desafio foi aceito! O jogo contra o time ', v_nome_anunciante, ' será em ',
+                   v_quando, ', em ', v_local, '. O chat com o outro capitão já está liberado.'), 500),
+       v_id_partida, CONCAT('desafio_aceito:', p_id_solicitacao), v_agora,
+       IF(p_id_usuario = v_capitao_solicitante, v_agora, NULL)),
+      (UUID(), v_capitao_anunciante, 'partida_confirmada', 'Partida confirmada',
+       LEFT(CONCAT('Você aceitou o desafio do time ', v_nome_solicitante, '. O jogo será em ',
+                   v_quando, ', em ', v_local, '. O chat com o outro capitão já está liberado.'), 500),
+       v_id_partida, CONCAT('desafio_aceito:', p_id_solicitacao), v_agora,
+       IF(p_id_usuario = v_capitao_anunciante, v_agora, NULL));
   END IF;
 
   COMMIT;
@@ -576,15 +639,18 @@ BEGIN
   DECLARE v_capitao_anunciante CHAR(36) CHARACTER SET ascii COLLATE ascii_bin;
   DECLARE v_capitao_solicitante CHAR(36) CHARACTER SET ascii COLLATE ascii_bin;
   DECLARE v_nome_anunciante VARCHAR(120);
+  DECLARE v_quando VARCHAR(20);
   DECLARE v_agora DATETIME(3) DEFAULT UTC_TIMESTAMP(3);
   DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN ROLLBACK; RESIGNAL; END;
 
   START TRANSACTION;
-  SELECT s.status, ta.id_capitao, ts.id_capitao, ta.nome
-    INTO v_status, v_capitao_anunciante, v_capitao_solicitante, v_nome_anunciante
+  SELECT s.status, ta.id_capitao, ts.id_capitao, ta.nome,
+         fn_quando_texto(a.data_hora_inicio, a.sigla_estado)
+    INTO v_status, v_capitao_anunciante, v_capitao_solicitante, v_nome_anunciante, v_quando
     FROM solicitacoes_confronto s
     JOIN times ta ON ta.id_time = s.id_time_anunciante
     JOIN times ts ON ts.id_time = s.id_time_solicitante
+    JOIN anuncios_partidas a ON a.id_anuncio = s.id_anuncio
    WHERE s.id_solicitacao = p_id_solicitacao
    FOR UPDATE OF s;
 
@@ -601,10 +667,11 @@ BEGIN
   UPDATE solicitacoes_confronto SET status = 'recusada', data_resposta = v_agora
    WHERE id_solicitacao = p_id_solicitacao;
   INSERT INTO notificacoes (id_notificacao, id_usuario_destinatario, tipo, titulo, mensagem,
-                            id_solicitacao, data_criacao)
-  VALUES (UUID(), v_capitao_solicitante, 'solicitacao_recusada', 'Não foi dessa vez.',
-          LEFT(CONCAT(v_nome_anunciante, ' recusou sua solicitação de confronto.'), 500),
-          p_id_solicitacao, v_agora);
+                            id_solicitacao, chave_evento, data_criacao)
+  VALUES (UUID(), v_capitao_solicitante, 'solicitacao_recusada', 'Solicitação encerrada',
+          LEFT(CONCAT('Sua solicitação para jogar contra o time ', v_nome_anunciante, ' em ',
+                      v_quando, ' foi recusada.'), 500),
+          p_id_solicitacao, CONCAT('solicitacao_encerrada:', p_id_solicitacao), v_agora);
   COMMIT;
 END$$
 
@@ -639,7 +706,9 @@ BEGIN
 END$$
 
 -- Cancelamento de partida confirmada por um dos capitães. O anúncio permanece
--- encerrado (decisão aprovada). Notifica o capitão do outro time.
+-- encerrado (decisão aprovada). Notifica os dois capitães: o do outro time
+-- ("Jogo cancelado", com data, hora e motivo) e quem cancelou (registro no
+-- histórico, já lido).
 CREATE PROCEDURE proc_cancelar_partida(
   IN p_id_partida CHAR(36) CHARACTER SET ascii COLLATE ascii_bin,
   IN p_id_usuario CHAR(36) CHARACTER SET ascii COLLATE ascii_bin,
@@ -656,14 +725,19 @@ BEGIN
   DECLARE v_time_cancelou CHAR(36) CHARACTER SET ascii COLLATE ascii_bin;
   DECLARE v_avisar CHAR(36) CHARACTER SET ascii COLLATE ascii_bin;
   DECLARE v_nome_cancelou VARCHAR(120);
+  DECLARE v_nome_outro VARCHAR(120);
+  DECLARE v_quando VARCHAR(20);
+  DECLARE v_motivo VARCHAR(500);
   DECLARE v_agora DATETIME(3) DEFAULT UTC_TIMESTAMP(3);
   DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN ROLLBACK; RESIGNAL; END;
 
   START TRANSACTION;
   SELECT p.status, p.data_hora_inicio, p.id_time_anunciante, p.id_time_adversario,
-         ta.id_capitao, tv.id_capitao, ta.nome, tv.nome
+         ta.id_capitao, tv.id_capitao, ta.nome, tv.nome,
+         fn_quando_texto(p.data_hora_inicio, p.sigla_estado)
     INTO v_status, v_inicio, v_time_anunciante, v_time_adversario,
-         v_capitao_anunciante, v_capitao_adversario, v_nome_anunciante, v_nome_adversario
+         v_capitao_anunciante, v_capitao_adversario, v_nome_anunciante, v_nome_adversario,
+         v_quando
     FROM partidas p
     JOIN times ta ON ta.id_time = p.id_time_anunciante
     JOIN times tv ON tv.id_time = p.id_time_adversario
@@ -677,21 +751,31 @@ BEGIN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Somente partidas confirmadas podem ser canceladas.';
   END IF;
   IF p_id_usuario = v_capitao_anunciante THEN
-    SET v_time_cancelou = v_time_anunciante, v_avisar = v_capitao_adversario, v_nome_cancelou = v_nome_anunciante;
+    SET v_time_cancelou = v_time_anunciante, v_avisar = v_capitao_adversario,
+        v_nome_cancelou = v_nome_anunciante, v_nome_outro = v_nome_adversario;
   ELSEIF p_id_usuario = v_capitao_adversario THEN
-    SET v_time_cancelou = v_time_adversario, v_avisar = v_capitao_anunciante, v_nome_cancelou = v_nome_adversario;
+    SET v_time_cancelou = v_time_adversario, v_avisar = v_capitao_anunciante,
+        v_nome_cancelou = v_nome_adversario, v_nome_outro = v_nome_anunciante;
   ELSE
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Somente os capitães dos dois times podem cancelar a partida.';
   END IF;
 
+  SET v_motivo = NULLIF(TRIM(p_motivo), '');
   UPDATE partidas
      SET status = 'cancelada', id_time_cancelou = v_time_cancelou,
-         motivo_cancelamento = NULLIF(TRIM(p_motivo), ''), data_cancelamento = v_agora
+         motivo_cancelamento = v_motivo, data_cancelamento = v_agora
    WHERE id_partida = p_id_partida;
   INSERT INTO notificacoes (id_notificacao, id_usuario_destinatario, tipo, titulo, mensagem,
-                            id_partida, data_criacao)
-  VALUES (UUID(), v_avisar, 'partida_cancelada', 'Partida cancelada.',
-          LEFT(CONCAT(v_nome_cancelou, ' cancelou a partida.'), 500), p_id_partida, v_agora);
+                            id_partida, chave_evento, data_criacao, data_leitura)
+  VALUES
+    (UUID(), v_avisar, 'partida_cancelada', 'Jogo cancelado',
+     LEFT(CONCAT('O jogo contra o time ', v_nome_cancelou, ', previsto para ', v_quando,
+                 ', foi cancelado.', IF(v_motivo IS NULL, '', CONCAT(' Motivo: ', v_motivo))), 500),
+     p_id_partida, CONCAT('partida_cancelada:', p_id_partida), v_agora, NULL),
+    (UUID(), p_id_usuario, 'partida_cancelada', 'Jogo cancelado',
+     LEFT(CONCAT('Você cancelou o jogo contra o time ', v_nome_outro, ', previsto para ', v_quando,
+                 '. O outro capitão foi avisado.'), 500),
+     p_id_partida, CONCAT('partida_cancelada:', p_id_partida), v_agora, v_agora);
   COMMIT;
 END$$
 
@@ -705,12 +789,14 @@ BEGIN
   DECLARE v_exclusao DATETIME(3);
   DECLARE v_capitao CHAR(36) CHARACTER SET ascii COLLATE ascii_bin;
   DECLARE v_nome_time VARCHAR(120);
+  DECLARE v_quando VARCHAR(20);
   DECLARE v_agora DATETIME(3) DEFAULT UTC_TIMESTAMP(3);
   DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN ROLLBACK; RESIGNAL; END;
 
   START TRANSACTION;
-  SELECT a.status, a.data_exclusao, t.id_capitao, t.nome
-    INTO v_status, v_exclusao, v_capitao, v_nome_time
+  SELECT a.status, a.data_exclusao, t.id_capitao, t.nome,
+         fn_quando_texto(a.data_hora_inicio, a.sigla_estado)
+    INTO v_status, v_exclusao, v_capitao, v_nome_time, v_quando
     FROM anuncios_partidas a JOIN times t ON t.id_time = a.id_time
    WHERE a.id_anuncio = p_id_anuncio
    FOR UPDATE OF a;
@@ -726,10 +812,11 @@ BEGIN
   END IF;
 
   INSERT INTO notificacoes (id_notificacao, id_usuario_destinatario, tipo, titulo, mensagem,
-                            id_solicitacao, data_criacao)
-  SELECT UUID(), t.id_capitao, 'solicitacao_encerrada', 'Anúncio removido.',
-         LEFT(CONCAT(v_nome_time, ' removeu o anúncio. Sua solicitação foi encerrada.'), 500),
-         s.id_solicitacao, v_agora
+                            id_solicitacao, chave_evento, data_criacao)
+  SELECT UUID(), t.id_capitao, 'solicitacao_encerrada', 'Solicitação encerrada',
+         LEFT(CONCAT('Sua solicitação para jogar contra o time ', v_nome_time,
+                     ' foi encerrada: o anúncio do jogo de ', v_quando, ' foi removido.'), 500),
+         s.id_solicitacao, CONCAT('solicitacao_encerrada:', s.id_solicitacao), v_agora
     FROM solicitacoes_confronto s JOIN times t ON t.id_time = s.id_time_solicitante
    WHERE s.id_anuncio = p_id_anuncio AND s.status = 'pendente';
   UPDATE solicitacoes_confronto
@@ -759,13 +846,17 @@ BEGIN
    FOR UPDATE;
 
   INSERT INTO notificacoes (id_notificacao, id_usuario_destinatario, tipo, titulo, mensagem,
-                            id_solicitacao, data_criacao)
-  SELECT UUID(), t.id_capitao, 'solicitacao_encerrada', 'Esse jogo não aconteceu.',
-         'O anúncio expirou sem partida confirmada. Sua solicitação foi encerrada.',
-         s.id_solicitacao, v_agora
+                            id_solicitacao, chave_evento, data_criacao)
+  SELECT UUID(), t.id_capitao, 'solicitacao_encerrada', 'Solicitação encerrada',
+         LEFT(CONCAT('Sua solicitação para jogar contra o time ', ta.nome, ' foi encerrada: o jogo de ',
+                     fn_quando_texto(a.data_hora_inicio, a.sigla_estado),
+                     ' expirou sem partida confirmada.'), 500),
+         s.id_solicitacao, CONCAT('solicitacao_encerrada:', s.id_solicitacao), v_agora
     FROM solicitacoes_confronto s
     JOIN tmp_anuncios_expirados x ON x.id_anuncio = s.id_anuncio
+    JOIN anuncios_partidas a ON a.id_anuncio = s.id_anuncio
     JOIN times t ON t.id_time = s.id_time_solicitante
+    JOIN times ta ON ta.id_time = a.id_time
    WHERE s.status = 'pendente';
 
   UPDATE solicitacoes_confronto s

@@ -13,7 +13,7 @@ const conexao = {
 const TABELAS = [
   'estados', 'modalidades', 'categorias_etarias', 'niveis_tecnicos', 'mandos_campo', 'criterios_avaliacao',
   'usuarios', 'codigos_recuperacao_senha', 'times', 'times_modalidades', 'anuncios_partidas',
-  'solicitacoes_confronto', 'mensagens', 'partidas', 'avaliacoes', 'notas_avaliacao', 'notificacoes',
+  'solicitacoes_confronto', 'mensagens', 'partidas', 'avaliacoes', 'notas_avaliacao', 'notificacoes', 'dispositivos_push', 'envios_push', 'conversas_abertas', 'lembretes_partidas', 'preferencias_notificacoes',
   'vis_estatisticas_times', 'vis_perfis_times', 'vis_anuncios_disponiveis', 'vis_resumo_solicitacoes',
 ];
 const PROCEDIMENTOS = [

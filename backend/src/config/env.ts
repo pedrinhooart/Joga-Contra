@@ -44,6 +44,15 @@ const schema = z.object({
   URL_PUBLICA: vazioComoAusente(z.string().url().optional()),
   /** Pacote Android do app (abre o app a partir do link). */
   ANDROID_PACOTE: z.string().regex(/^[a-zA-Z][\w]*(\.[a-zA-Z][\w]*)+$/).default('com.jogacontra.joga_contra'),
+  // --- Push (Firebase Cloud Messaging). Ver services/push.ts. ---
+  /**
+   * Caminho do JSON da conta de serviço do Firebase (Firebase Console >
+   * Configurações do projeto > Contas de serviço). Fica só no servidor, fora do
+   * Git. Vazio: push desligado (as notificações internas continuam).
+   */
+  FIREBASE_CREDENCIAIS: vazioComoAusente(z.string().min(1).optional()),
+  /** Intervalo da fila de envio de push, em milissegundos. */
+  PUSH_INTERVALO_MS: z.coerce.number().int().min(500).default(3000),
   /** SHA-256 do certificado de assinatura do app, para os Android App Links (assetlinks.json). */
   ANDROID_CERT_SHA256: vazioComoAusente(z.string().regex(/^([0-9A-F]{2}:){31}[0-9A-F]{2}(,([0-9A-F]{2}:){31}[0-9A-F]{2})*$/i).optional()),
 });
