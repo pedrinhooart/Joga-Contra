@@ -7,6 +7,7 @@ import '../repositories/api/api_repositories.dart';
 import '../repositories/contratos.dart';
 import '../repositories/demo/demo_repositories.dart';
 import '../services/api_client.dart';
+import '../services/links_recebidos.dart';
 
 /// Estado global mínimo: sessão (capitão + time) e cadastros de referência.
 /// Dados de tela (anúncios, partidas...) são buscados sob demanda nos repositórios.
@@ -66,6 +67,34 @@ class AppState extends ChangeNotifier {
     await repositorios.auth.sair();
     _sessao = null;
     notifyListeners();
+  }
+
+  /// Token do link de redefinição de senha aberto no app. Vazio: o link veio
+  /// sem um token válido. Null: nenhum link aberto. Enquanto não for null, o
+  /// app mostra a tela de nova senha, com ou sem sessão.
+  String? tokenRedefinicao;
+
+  /// Link recebido pelo app (e-mail de recuperação). Outros links são ignorados.
+  void abrirLink(Uri uri) {
+    if (!LinksRecebidos.eRedefinicao(uri)) return;
+    tokenRedefinicao = LinksRecebidos.tokenDeRedefinicao(uri) ?? '';
+    notifyListeners();
+  }
+
+  void fecharRedefinicao() {
+    tokenRedefinicao = null;
+    notifyListeners();
+  }
+
+  /// Troca a senha pelo link aberto. A API derruba todas as sessões da conta,
+  /// então este aparelho também sai e a pessoa entra com a senha nova.
+  Future<void> redefinirSenha(String novaSenha, String confirmacaoSenha) async {
+    await repositorios.auth.redefinirSenha(
+      token: tokenRedefinicao ?? '',
+      novaSenha: novaSenha,
+      confirmacaoSenha: confirmacaoSenha,
+    );
+    if (_sessao != null) await sair();
   }
 
   Future<void> atualizarTime(AtualizacaoTime dados) async {

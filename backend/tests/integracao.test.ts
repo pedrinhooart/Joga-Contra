@@ -3,16 +3,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import request from 'supertest';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PNG_1X1 } from './dados-teste.js';
-
-// Não há provedor de e-mail: o teste captura o código no ponto de envio.
-const codigosEnviados = vi.hoisted(() => [] as string[]);
-vi.mock('../src/services/email.js', () => ({
-  enviarCodigoRecuperacao: async (_email: string, codigo: string) => {
-    codigosEnviados.push(codigo);
-  },
-}));
 
 /**
  * Integração API + MySQL. Grava dados fictícios (teste.homologacao.*@example.com) de verdade, por
@@ -855,28 +847,7 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
     expect(perfil).toMatchObject({ totalPartidasRealizadas: 1, totalAvaliacoes: 1, mediaAvaliacao: 5 });
   });
 
-  it('recuperação de senha: não revela e-mail e o código é de uso único', async () => {
-    const email = `teste.homologacao.${randomUUID()}@example.com`;
-    await api().post('/auth/cadastro').send({
-      usuario: { nome: 'X', email, senha: SENHA },
-      time: { nome: 'Y', idsModalidades: [1], idCategoriaEtaria: LIVRE, quantidadeJogadores: 10, cidade: 'Z', siglaEstado: 'SP' },
-    }).expect(201);
-    expect((await api().post('/auth/recuperar-senha').send({ email })).status).toBe(202);
-    expect((await api().post('/auth/recuperar-senha').send({ email: 'ninguem@example.com' })).status).toBe(202);
-    const [[{ total }]] = await pool.query(
-      'SELECT COUNT(*) AS total FROM codigos_recuperacao_senha c JOIN usuarios u USING (id_usuario) WHERE u.email = ?',
-      [email],
-    );
-    expect(total).toBe(1);
-    expect((await api().post('/auth/redefinir-senha').send({ codigo: 'x'.repeat(64), novaSenha: 'nova-senha-123' })).status).toBe(400);
-
-    const codigo = codigosEnviados.at(-1);
-    const novaSenha = 'nova-senha-123';
-    expect((await api().post('/auth/redefinir-senha').send({ codigo, novaSenha })).status).toBe(204);
-    expect((await api().post('/auth/login').send({ email, senha: SENHA })).status).toBe(401);
-    expect((await api().post('/auth/login').send({ email, senha: novaSenha })).status).toBe(200);
-    expect((await api().post('/auth/redefinir-senha').send({ codigo, novaSenha: 'outra-senha-123' })).status).toBe(400);
-  });
+  // Recuperação de senha: tests/recuperacao-senha.integracao.test.ts (com servidor SMTP local).
 
   it('não grava datas fora de UTC', async () => {
     const c = await novoCapitao('Fuso');
@@ -885,5 +856,128 @@ describe.runIf(ativo)('integração com joga_contra_v2', () => {
       [c.idTime],
     );
     expect(diferenca).toBeLessThan(2);
+  });
+
+  describe('aceite: outras solicitações do desafiante no mesmo dia e horário', () => {
+    /** Data local (AAAA-MM-DD) daqui a `dias` dias. */
+    const dia = (dias: number) => new Date(Date.now() + dias * 86_400_000).toISOString().slice(0, 10);
+    const jogo = (dono: Capitao, local: string, uf = 'SP', cidade = 'São Paulo') =>
+      publicar(dono, { dataHoraLocal: local, siglaEstado: uf, cidade });
+    const estado = async (idSolicitacao: string) => {
+      const [[l]] = await pool.query(
+        'SELECT status, motivo_encerramento, data_resposta FROM solicitacoes_confronto WHERE id_solicitacao = ?',
+        [idSolicitacao],
+      );
+      return l;
+    };
+    const aceitar = (dono: Capitao, s: { idSolicitacao: string }) =>
+      api(dono).patch(`/solicitacoes/${s.idSolicitacao}/confirmar`);
+
+    it('encerra só as pendentes do mesmo time na mesma data e hora local', async () => {
+      const joga = await novoCapitao('JOGA Horário');
+      const outro = await novoCapitao('Outro Time Horário');
+      const donos = await Promise.all(['A', 'B', 'C', 'D', 'E', 'F', 'G'].map((x) => novoCapitao(`Dono ${x} Horário`)));
+      const [donoA, donoB, donoC, donoD, donoE, donoF, donoG] = donos;
+      const d = dia(12);
+      const amanha = dia(13);
+      const anuncios = {
+        A: await jogo(donoA, `${d}T21:00`),
+        B: await jogo(donoB, `${d}T21:00`),
+        C: await jogo(donoC, `${d}T21:00`),
+        D: await jogo(donoD, `${d}T19:00`), // mesmo dia, outro horário
+        E: await jogo(donoE, `${amanha}T21:00`), // mesmo horário, outro dia
+        // MS (UTC-4): 21:00 local é outro instante, mas a mesma data e hora local.
+        F: await jogo(donoF, `${d}T21:00`, 'MS', 'Campo Grande'),
+        // MS 20:00 é o mesmo instante de 21:00 em SP, mas outro horário local.
+        G: await jogo(donoG, `${d}T20:00`, 'MS', 'Campo Grande'),
+      };
+      const s: Record<string, any> = {};
+      for (const [k, a] of Object.entries(anuncios)) s[k] = await solicitar(joga, a.idAnuncio);
+      const deOutroTime = await solicitar(outro, anuncios.B.idAnuncio);
+
+      const aceito = (await aceitar(donoA, s.A).expect(200)).body.data;
+      expect(aceito.status).toBe('confirmada');
+      expect(aceito.idPartida).toBeTruthy();
+
+      // B, C e F: encerradas automaticamente, com motivo, sem apagar.
+      for (const k of ['B', 'C', 'F']) {
+        const l = await estado(s[k].idSolicitacao);
+        expect(l.status, k).toBe('encerrada');
+        expect(l.motivo_encerramento, k).toBe('O time desafiante já tem partida confirmada neste dia e horário.');
+        expect(l.data_resposta, k).not.toBeNull();
+      }
+      // Outro horário, outro dia, outro horário local e outro time: intactas.
+      for (const k of ['D', 'E', 'G']) expect((await estado(s[k].idSolicitacao)).status, k).toBe('pendente');
+      expect((await estado(deOutroTime.idSolicitacao)).status).toBe('pendente');
+      expect((await estado(s.A.idSolicitacao)).status).toBe('confirmada');
+
+      // Histórico em Meus Desafios: todas continuam lá, com o estado e o motivo.
+      const meus = (await api(joga).get('/solicitacoes/minhas?papel=solicitante').expect(200)).body.data;
+      expect(meus).toHaveLength(7);
+      const porId = new Map(meus.map((x: any) => [x.idSolicitacao, x]));
+      expect((porId.get(s.A.idSolicitacao) as any).status).toBe('confirmada');
+      expect((porId.get(s.B.idSolicitacao) as any).status).toBe('encerrada');
+      expect((porId.get(s.B.idSolicitacao) as any).motivoEncerramento).toMatch(/mesmo|neste dia e horário/);
+      expect((porId.get(s.D.idSolicitacao) as any).motivoEncerramento).toBeNull();
+
+      // Avisos: o dono do anúncio perde o desafiante; o JOGA sabe o porquê.
+      const avisoB = (await api(donoB).get('/notificacoes')).body.data.filter(
+        (n: any) => n.tipo === 'solicitacao_encerrada' && n.idSolicitacao === s.B.idSolicitacao,
+      );
+      expect(avisoB).toHaveLength(1);
+      const avisosJoga = (await api(joga).get('/notificacoes')).body.data.filter(
+        (n: any) => n.tipo === 'solicitacao_encerrada',
+      );
+      expect(avisosJoga.map((n: any) => n.idSolicitacao).sort()).toEqual(
+        [s.B, s.C, s.F].map((x) => x.idSolicitacao).sort(),
+      );
+      expect((await api(donoD).get('/notificacoes')).body.data.filter((n: any) => n.tipo === 'solicitacao_encerrada')).toEqual([]);
+
+      // Aprovar uma encerrada: recusado, nada muda.
+      const tentativa = await aceitar(donoB, s.B);
+      expect(tentativa.status).toBe(409);
+      expect(tentativa.body.error.code).toBe('BUSINESS_RULE');
+      expect((await estado(s.B.idSolicitacao)).status).toBe('encerrada');
+      // O dono de B ainda aceita o outro time.
+      expect((await aceitar(donoB, deOutroTime).expect(200)).body.data.status).toBe('confirmada');
+
+      // Outro horário do mesmo dia continua aceitável e não mexe em E nem G.
+      expect((await aceitar(donoD, s.D).expect(200)).body.data.status).toBe('confirmada');
+      for (const k of ['E', 'G']) expect((await estado(s[k].idSolicitacao)).status, k).toBe('pendente');
+    });
+
+    it('dois aceites simultâneos no mesmo horário: só um vale', async () => {
+      for (let rodada = 0; rodada < 3; rodada++) {
+        const joga = await novoCapitao(`JOGA Simultâneo ${rodada}`);
+        const [donoH, donoI] = await Promise.all([novoCapitao(`Dono H ${rodada}`), novoCapitao(`Dono I ${rodada}`)]);
+        const local = `${dia(14 + rodada)}T21:00`;
+        const sH = await solicitar(joga, (await jogo(donoH, local)).idAnuncio);
+        const sI = await solicitar(joga, (await jogo(donoI, local)).idAnuncio);
+
+        const respostas = await Promise.all([aceitar(donoH, sH), aceitar(donoI, sI)]);
+        expect(respostas.map((r) => r.status).sort(), `rodada ${rodada}`).toEqual([200, 409]);
+        const estados = [await estado(sH.idSolicitacao), await estado(sI.idSolicitacao)].map((l) => l.status).sort();
+        expect(estados).toEqual(['confirmada', 'encerrada']);
+        const [[{ partidas }]] = await pool.query(
+          "SELECT COUNT(*) AS partidas FROM partidas WHERE id_time_adversario = ? AND status = 'confirmada'",
+          [joga.idTime],
+        );
+        expect(partidas).toBe(1);
+      }
+    });
+
+    it('fn_inicio_local usa os mesmos fusos da API em todas as UFs', async () => {
+      const { FUSO_POR_UF, deslocamentoMinutos } = await import('../src/services/fuso.js');
+      const instante = Date.UTC(2026, 10, 27, 0, 0); // 26/11/2026 21:00 em SP
+      for (const [uf, zona] of Object.entries(FUSO_POR_UF)) {
+        const local = new Date(instante + deslocamentoMinutos(zona, instante) * 60_000);
+        const esperado = local.toISOString().slice(0, 16).replace('T', ' ');
+        const [[{ calculado }]] = await pool.query('SELECT fn_inicio_local(?, ?) AS calculado', [
+          '2026-11-27 00:00:00.000',
+          uf,
+        ]);
+        expect(calculado, uf).toBe(esperado);
+      }
+    });
   });
 });

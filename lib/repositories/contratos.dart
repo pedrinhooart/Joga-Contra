@@ -23,7 +23,19 @@ abstract interface class AuthRepository {
   Future<Sessao?> sessaoAtual();
   Future<Sessao> entrar({required String email, required String senha});
   Future<Sessao> cadastrar(CadastroCapitao dados);
+
+  /// Pede o e-mail com o link de redefinição. A resposta é a mesma para
+  /// qualquer e-mail (não revela se a conta existe).
   Future<void> solicitarRecuperacaoSenha(String email);
+
+  /// Troca a senha com o token do link. Falhas do link chegam como
+  /// `ApiException` com código TOKEN_INVALIDO, TOKEN_EXPIRADO,
+  /// TOKEN_UTILIZADO ou TOKEN_SUBSTITUIDO.
+  Future<void> redefinirSenha({
+    required String token,
+    required String novaSenha,
+    required String confirmacaoSenha,
+  });
   Future<void> sair();
 }
 
@@ -56,8 +68,8 @@ abstract interface class SolicitacaoRepository {
   Future<List<SolicitacaoConfronto>> listarDoMeuTime({PapelSolicitacao? papel});
 
   /// Sincronização leve: registra a entrega das mensagens recebidas e devolve
-  /// quantas ainda não foram lidas.
-  Future<int> sincronizar();
+  /// quantas ainda não foram lidas, com a versão das solicitações e partidas.
+  Future<Sincronizacao> sincronizar();
   Future<SolicitacaoConfronto> obter(String idSolicitacao);
   Future<SolicitacaoConfronto> solicitar(String idAnuncio, {String? mensagem});
 

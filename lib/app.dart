@@ -44,10 +44,21 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     if (estado == AppLifecycleState.resumed) _sincronizar();
   }
 
+  /// Última versão das solicitações e partidas do meu time vista pelo app.
+  String? _versaoDados;
+
+  /// Telas de lista que se atualizam sozinhas quando a versão muda (ex.: outro
+  /// time aceitou um desafio e os pedidos no mesmo horário foram encerrados).
+  static const _paginasQueAtualizam = {'games', 'conversations'};
+
   Future<void> _sincronizar() async {
     if (!mounted || !app.autenticado) return;
     try {
-      await app.repositorios.solicitacoes.sincronizar();
+      final r = await app.repositorios.solicitacoes.sincronizar();
+      if (!mounted) return;
+      final mudou = _versaoDados != null && r.versao != _versaoDados;
+      _versaoDados = r.versao;
+      if (mudou && _paginasQueAtualizam.contains(page)) _recarregar();
     } catch (_) {
       // Sem conexão: tenta de novo no próximo ciclo.
     }
@@ -60,7 +71,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   /// Mesmo limite exibido no campo; a API aceita até 2000.
   static const _limiteDescricao = 500;
 
-  static const _paginasAuth = {'login', 'register', 'forgot'};
+  static const _paginasAuth = {'login', 'register', 'forgot', 'reset'};
 
   String page = 'home', gameTab = GamesScreen.meusAnuncios;
   FiltrosBusca filtrosBusca = const FiltrosBusca();
@@ -97,14 +108,22 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     'login': 'Entrar',
     'register': 'Criar conta',
     'forgot': 'Recuperar acesso',
+    'reset': 'Nova senha',
   };
 
   AppState get app => AppScope.of(context);
 
-  void go(String next) => setState(() {
-    if (next == 'create') anuncioEditando = null;
-    page = next;
-  });
+  void go(String next) {
+    setState(() {
+      if (next == 'create') anuncioEditando = null;
+      page = next;
+    });
+    // A lista acabou de ser carregada: a versão atual vira a referência.
+    if (_paginasQueAtualizam.contains(next)) {
+      _versaoDados = null;
+      _sincronizar();
+    }
+  }
 
   void _recarregar() => setState(() => versao++);
 
@@ -155,8 +174,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         ),
       );
     }
-    // Sem sessão, somente as telas de autenticação ficam acessíveis.
-    final atual = app.autenticado || _paginasAuth.contains(page)
+    // Link de redefinição de senha aberto: a tela de nova senha vem antes de
+    // tudo, com ou sem sessão. Sem sessão, só as telas de autenticação.
+    final atual = app.tokenRedefinicao != null
+        ? 'reset'
+        : app.autenticado || _paginasAuth.contains(page)
         ? page
         : 'login';
     // "Anunciar" saiu da barra: continua no Início (Anunciar jogo) e em Meus anúncios.
@@ -166,7 +188,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     return PopScope(
       canPop: atual == 'home' || atual == 'login',
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) go(telaAuth ? 'login' : _backFor(atual));
+        if (didPop) return;
+        if (atual == 'reset') return _fecharRedefinicao();
+        go(telaAuth ? 'login' : _backFor(atual));
       },
       child: Scaffold(
         appBar: telaAuth
@@ -343,8 +367,22 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         go(atual == 'forgot' ? 'login' : 'home');
       },
     ),
+    'reset' => RedefinirSenhaScreen(
+      key: ValueKey(app.tokenRedefinicao),
+      onPedirNovoLink: () {
+        app.fecharRedefinicao();
+        go('forgot');
+      },
+      onConcluir: _fecharRedefinicao,
+    ),
     _ => _home(),
   };
+
+  /// Sai da tela de nova senha (concluída ou não).
+  void _fecharRedefinicao() {
+    app.fecharRedefinicao();
+    go(app.autenticado ? 'home' : 'login');
+  }
 
   Future<bool> _perguntar(String title, String body, String positive) async =>
       await showDialog<bool>(

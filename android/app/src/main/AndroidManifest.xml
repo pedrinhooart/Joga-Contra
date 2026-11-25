@@ -25,6 +25,28 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Links recebidos pelo app (pacote app_links); o tratamento
+                 padrão do Flutter fica desligado para não abrir rotas soltas. -->
+            <meta-data android:name="flutter_deeplinking_enabled" android:value="false" />
+            <!-- Recuperação de senha: a página do link do e-mail abre
+                 jogacontra://redefinir-senha?token=... -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="jogacontra" android:host="redefinir-senha" />
+            </intent-filter>
+            <!-- Produção com domínio próprio (Android App Links): o link do
+                 e-mail abre o app direto. Descomente trocando o host pelo da
+                 URL_PUBLICA e configure ANDROID_CERT_SHA256 na API
+                 (ver backend/README.md, "Recuperação de senha").
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="DOMINIO_DA_API" android:path="/redefinir-senha" />
+            </intent-filter>
+            -->
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

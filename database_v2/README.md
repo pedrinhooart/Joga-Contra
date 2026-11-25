@@ -23,7 +23,7 @@ Banco novo, em português, criado a partir de [docs/AUDITORIA_DADOS_DINAMICOS.md
 | Ordem | Arquivo | Conteúdo | Pode repetir? |
 |---|---|---|---|
 | 1 | [01_esquema.sql](01_esquema.sql) | Banco, 17 tabelas, PKs, 35 FKs, UNIQUEs, 66 CHECKs, índices | Não: falha se as tabelas já existirem (proteção contra sobrescrita) |
-| 2 | [02_rotinas.sql](02_rotinas.sql) | 15 gatilhos e 7 procedimentos transacionais; evento opcional comentado | Não (falha se já existirem) |
+| 2 | [02_rotinas.sql](02_rotinas.sql) | 15 gatilhos, 1 função (`fn_inicio_local`) e 7 procedimentos transacionais; evento opcional comentado | Não (falha se já existirem) |
 | 3 | [03_dados_referencia.sql](03_dados_referencia.sql) | Estados, modalidades, categorias, níveis, mandos, critérios | **Sim** (idempotente) |
 | 4 | [04_visoes.sql](04_visoes.sql) | 4 visões com os dados calculados para a API | Não (falha se já existirem) |
 | 5 | [05_validacao.sql](05_validacao.sql) | Somente `SELECT`/`EXPLAIN`: confere a estrutura e traz consultas de exemplo | Sim |
@@ -32,6 +32,7 @@ Banco novo, em português, criado a partir de [docs/AUDITORIA_DADOS_DINAMICOS.md
 | 8 | [08_anuncio_simplificado.sql](08_anuncio_simplificado.sql) | Migração: anúncio sem categoria e quantidade obrigatórias, coluna `duracao_minutos`, busca com `LEFT JOIN` e chat só após o aceite (gatilho de mensagens). **Só para bancos criados antes**: 01, 02 e 04 já trazem o resultado. Aplicada no `joga_contra_v2` em 10/11/2026 | Não (ADD COLUMN) |
 | 9 | [09_modalidades.sql](09_modalidades.sql) | Modalidades: Society/Futebol Sintético, Futsal (antes "Futebol de quadra"), Futebol de Campo e Futebol de Campo Reduzido. Só cadastro de referência; anúncios antigos mantêm o id. Aplicada no `joga_contra_v2` em 23/11/2026 | Sim (idempotente) |
 | 10 | [10_mensagens_entrega.sql](10_mensagens_entrega.sql) | Migração: coluna `mensagens.data_entrega` (estados do chat: enviada, entregue, visualizada) e gatilho de mensagens recriado para aceitar a entrega uma única vez. Não altera mensagens existentes. **Só para bancos criados antes**: 01 e 02 já trazem o resultado. Aplicada no `joga_contra_v2` em 23/11/2026 | Não (ADD COLUMN) |
+| 11 | [11_conflito_horario.sql](11_conflito_horario.sql) | Regra do mesmo horário: cria `fn_inicio_local` e recria `proc_confirmar_solicitacao`. Ao aceitar um desafio, as outras solicitações **pendentes** do mesmo time desafiante para jogos na mesma data e hora local são encerradas (com motivo, sem apagar) na mesma transação, e os capitães afetados são avisados. Só rotinas: não altera tabelas nem dados. **Só para bancos criados antes**: 02 já traz o resultado. Aplicada no `joga_contra_v2` em 23/11/2026 | Sim (remove e recria as rotinas) |
 
 Nenhum script contém `DROP DATABASE` ou `DROP TABLE`. O 06 remove apenas os registros e os procedimentos auxiliares `teste_*` que ele mesmo criou.
 
@@ -109,6 +110,8 @@ As tabelas `modalidades`, `categorias_etarias`, `niveis_tecnicos`, `mandos_campo
 | `data_expiracao` | data | S | Posterior à criação |
 | `data_uso` | data | N | Uso único |
 | `data_criacao` | data | S | |
+
+Uso pela API (recuperação de senha por e-mail, sem mudança de estrutura): validade de 30 minutos; só o pedido mais recente de cada conta é aceito (os anteriores ficam como histórico); no máximo 3 pedidos por conta por hora; a troca de senha trava o pedido e a conta (`FOR UPDATE`) e grava `data_uso` na mesma transação. Nenhum registro é apagado. Detalhes em `backend/README.md`, seção "Recuperação de senha".
 
 ### 3.4 `times`
 
@@ -374,17 +377,24 @@ Por que as FKs compostas: elas garantem pelo próprio banco que a solicitação 
 | 8 | As demais solicitações são encerradas automaticamente | Na mesma transação da confirmação | `proc_confirmar_solicitacao` |
 | 9 | Capitães não selecionados são notificados | Uma notificação `solicitacao_encerrada` por capitão afetado, na mesma transação | `proc_confirmar_solicitacao` |
 | 10 | Anúncio tem modalidade, categoria e nível | As três FKs `NOT NULL` | Banco |
+| 11 | Um time não joga duas partidas ao mesmo tempo | Ao aceitar um desafio, as outras solicitações **pendentes** do mesmo time desafiante para jogos com a mesma data e hora **local** de início (`fn_inicio_local`: instante UTC + fuso da UF) viram `encerrada`, com `motivo_encerramento`; os donos desses anúncios e o capitão desafiante recebem `solicitacao_encerrada`. Nunca a aceita, nunca as de outros times, nada é apagado | `proc_confirmar_solicitacao` |
 
 ### 6.2 Confirmação: transação e concorrência
 
 `CALL proc_confirmar_solicitacao(id_solicitacao, id_usuario)`:
 
-1. `START TRANSACTION`.
-2. Bloqueia **o anúncio** (`SELECT ... FOR UPDATE`). Toda confirmação do mesmo anúncio passa por esse bloqueio, então elas acontecem uma de cada vez.
-3. Bloqueia e relê a solicitação; valida se está pendente, se o anúncio está ativo, não excluído e com data futura, e se o usuário é capitão de um dos dois times.
-4. Registra a data de confirmação do lado do usuário. Repetir a chamada não altera a data.
-5. Se os dois lados confirmaram: a solicitação vira `confirmada`, a **partida** é criada com cópia dos dados, o anúncio vira `encerrado`, os capitães afetados são **notificados**, as demais pendentes são **encerradas** e os dois envolvidos recebem `partida_confirmada`.
-6. `COMMIT`. Em qualquer erro: `ROLLBACK` e o erro é repassado à API (`RESIGNAL`).
+1. Lê o anúncio e o time desafiante da solicitação (imutáveis) e abre a transação (`START TRANSACTION`).
+2. Bloqueia **o time desafiante** (`SELECT ... FOR UPDATE` em `times`). Os aceites de desafios do mesmo time acontecem um de cada vez, e ele não consegue criar solicitação nova até o fim (a FK de `solicitacoes_confronto` lê o time com bloqueio compartilhado).
+3. Bloqueia **o anúncio**. Toda confirmação do mesmo anúncio passa por esse bloqueio, então elas acontecem uma de cada vez. A ordem é sempre time → anúncio → solicitação.
+4. Bloqueia e relê a solicitação; valida se está pendente, se o anúncio está ativo, não excluído e com data futura, e se o usuário é capitão de um dos dois times.
+5. Registra a data de confirmação do lado do usuário. Repetir a chamada não altera a data.
+6. Se os dois lados confirmaram: a solicitação vira `confirmada`, a **partida** é criada com cópia dos dados, o anúncio vira `encerrado`, os capitães afetados são **notificados**, as demais pendentes do anúncio são **encerradas** e os dois envolvidos recebem `partida_confirmada`.
+7. **Mesmo dia e horário** (regra 11): as outras solicitações pendentes do time desafiante cujo jogo começa na mesma data e hora local (`fn_inicio_local(data_hora_inicio, sigla_estado)` igual à do jogo aceito, com precisão de minuto) viram `encerrada`, com `motivo_encerramento` = "O time desafiante já tem partida confirmada neste dia e horário.". O dono de cada anúncio recebe "Desafio retirado." e o capitão desafiante recebe "Desafio encerrado." (`solicitacao_encerrada`). Os anúncios dessas solicitações são lidos sem bloqueio (evita impasse com quem confirma aqueles anúncios); o `UPDATE` relê o status atual e só fecha o que ainda está pendente.
+8. `COMMIT`. Em qualquer erro: `ROLLBACK` e o erro é repassado à API (`RESIGNAL`).
+
+Data e hora **local**: o banco guarda o instante em UTC; `fn_inicio_local` soma o fuso da UF do anúncio (AC −5; AM, MS, MT, RO, RR −4; demais −3; sem horário de verão desde 2019), os mesmos de `backend/src/services/fuso.ts` — o teste de integração confere as 27 UFs. Assim, 21:00 em SP e 21:00 em MS contam como o mesmo horário; 20:00 em MS (o mesmo instante de 21:00 em SP) não.
+
+Dois aceites simultâneos para o mesmo time e horário: o bloqueio do time põe um atrás do outro; o segundo encontra a sua solicitação já `encerrada` e recebe `Esta solicitação não está mais em aberto.` (HTTP 409). Se o MySQL ainda assim apontar um impasse (*deadlock*) entre aceites cruzados, a transação inteira é desfeita e a API repete a chamada (até 3 vezes).
 
 Barreiras extras que funcionam **mesmo que alguém altere as tabelas sem usar o procedimento**:
 - `un_solicitacoes_confronto_confirmada`: no máximo uma solicitação confirmada por anúncio.

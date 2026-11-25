@@ -1,18 +1,40 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:joga_contra/main.dart';
 import 'package:joga_contra/models/anuncio_partida.dart';
 import 'package:joga_contra/models/usuario.dart';
+import 'package:joga_contra/repositories/contratos.dart';
 import 'package:joga_contra/repositories/api/api_repositories.dart';
 import 'package:joga_contra/services/api_client.dart';
 import 'package:joga_contra/services/armazenamento_sessao.dart';
 import 'package:joga_contra/state/app_state.dart';
+import 'package:joga_contra/widgets/common.dart';
 
 /// Telas reais do app com a API rodando (sem dados de demonstração).
 /// Grava dados fictícios: só roda com `--dart-define=API_TESTE_URL=...`.
 const _url = String.fromEnvironment('API_TESTE_URL');
 const _senha = 'senha-de-teste-123';
+const _novaSenha = 'senha-nova-456';
+
+/// Pasta onde o servidor SMTP de teste grava os e-mails recebidos (JSON).
+/// Sem ela, o teste de recuperação de senha é pulado.
+const _emails = String.fromEnvironment('EMAILS_TESTE_DIR');
+
+/// Espera o e-mail enviado pela API para [email] chegar à pasta de captura.
+Future<Map<String, dynamic>> _emailPara(String email) async {
+  for (var i = 0; i < 100; i++) {
+    for (final arquivo in Directory(_emails).listSync().whereType<File>()) {
+      final dados =
+          jsonDecode(arquivo.readAsStringSync()) as Map<String, dynamic>;
+      if ('${dados['para']}'.contains(email)) return dados;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+  }
+  throw StateError('Nenhum e-mail chegou para $email.');
+}
 
 /// Deixa as requisições reais terminarem: `pump` sozinho não espera a rede.
 Future<void> _aguardar(WidgetTester tester, [int ciclos = 8]) async {
@@ -105,6 +127,48 @@ Future<String> _capitaoSemAnuncio(String marca) async {
     ),
   );
   return email;
+}
+
+/// Capitão novo (repositórios com a sessão dele) e o e-mail para entrar no app.
+Future<(Repositorios, String)> _capitao(String nomeTime) async {
+  final repos = criarRepositoriosApi(
+    ApiClient(baseUrl: _url),
+    armazenamento: ArmazenamentoEmMemoria(),
+  );
+  final email =
+      'teste.homologacao.horario.${DateTime.now().microsecondsSinceEpoch}@example.com';
+  await repos.auth.cadastrar(
+    CadastroCapitao(
+      nome: 'Capitão $nomeTime',
+      email: email,
+      senha: _senha,
+      nomeTime: nomeTime,
+      cidade: 'São Paulo',
+      siglaEstado: 'SP',
+    ),
+  );
+  return (repos, email);
+}
+
+/// Dono com um jogo em São Paulo no horário [quando] (horário local).
+Future<(Repositorios, String)> _donoComJogo(
+  String nomeTime,
+  DateTime quando,
+) async {
+  final (repos, _) = await _capitao(nomeTime);
+  final refs = await repos.referencias.carregar();
+  final anuncio = await repos.anuncios.criar(
+    RascunhoAnuncio(
+      idModalidade: refs.modalidades.first.id,
+      idNivelTecnico: refs.niveisTecnicos.first.id,
+      dataHoraInicio: quando,
+      duracaoMinutos: 90,
+      cidade: 'São Paulo',
+      siglaEstado: 'SP',
+      nomeLocal: 'Arena $nomeTime',
+    ),
+  );
+  return (repos, anuncio.id);
 }
 
 void main() {
@@ -244,6 +308,188 @@ void main() {
       await tester.pump(
         const Duration(seconds: 20),
       ); // timers de timeout do ApiClient
+    },
+  );
+
+  testWidgets(
+    'aceite no mesmo horário: Meus Desafios se atualiza sozinho',
+    skip: _url.isEmpty,
+    (tester) async {
+      // Alta para a lista inteira ser montada; larga pela fonte dos testes.
+      tester.view.physicalSize = const Size(600, 2000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final marca = DateTime.now().microsecondsSinceEpoch.toString();
+      final dia = DateTime.now().add(const Duration(days: 9));
+      final as21 = DateTime(dia.year, dia.month, dia.day, 21);
+      final as19 = DateTime(dia.year, dia.month, dia.day, 19);
+      final (donoA, anuncioA) = (await tester.runAsync(
+        () => _donoComJogo('Dono A $marca', as21),
+      ))!;
+      final (_, anuncioB) = (await tester.runAsync(
+        () => _donoComJogo('Dono B $marca', as21),
+      ))!;
+      final (_, anuncioC) = (await tester.runAsync(
+        () => _donoComJogo('Dono C $marca', as21),
+      ))!;
+      final (_, anuncioD) = (await tester.runAsync(
+        () => _donoComJogo('Dono D $marca', as19),
+      ))!;
+      final (joga, emailJoga) = (await tester.runAsync(
+        () => _capitao('JOGA $marca'),
+      ))!;
+      final pedidos = (await tester.runAsync(
+        () async => [
+          for (final a in [anuncioA, anuncioB, anuncioC, anuncioD])
+            await joga.solicitacoes.solicitar(a),
+        ],
+      ))!;
+
+      final state = AppState(
+        criarRepositoriosApi(
+          ApiClient(baseUrl: _url),
+          armazenamento: ArmazenamentoEmMemoria(),
+        ),
+      );
+      await tester.pumpWidget(JogaContraApp(state: state));
+      await _esperarTexto(tester, find.text('Seu time em campo.'));
+      await tester.enterText(find.byType(TextFormField).at(0), emailJoga);
+      await tester.enterText(find.byType(TextFormField).at(1), _senha);
+      await tester.tap(find.text('Entrar'));
+      await _esperarTexto(tester, find.text('Seu time entra em campo.'));
+      await _semSnackbar(tester);
+
+      await tester.tap(find.text('Meus Jogos').last);
+      await _aguardar(tester);
+      await tester.tap(find.text('Meus Desafios'));
+      await _esperarTexto(tester, find.text('Ver solicitação'));
+      expect(find.text('Aguardando aceite'), findsNWidgets(4));
+
+      // O dono do jogo A aceita no aparelho dele.
+      await tester.runAsync(() => donoA.solicitacoes.confirmar(pedidos[0].id));
+
+      // Próxima sincronização (a cada 30 s): a lista se atualiza sozinha.
+      await tester.pump(const Duration(seconds: 31));
+      await _esperarTexto(tester, find.text('Encerrada'));
+      expect(find.text('Encerrada'), findsNWidgets(2)); // B e C
+      expect(find.text('Confirmado'), findsOneWidget); // A, já como partida
+      expect(find.text('Aguardando aceite'), findsOneWidget); // D, 19:00
+      expect(find.text('Ver partida'), findsOneWidget);
+
+      // Um desafio encerrado: motivo à vista, sem aceite e sem chat.
+      final cartao = find.ancestor(
+        of: find.text('Encerrada').first,
+        matching: find.byType(Panel),
+      );
+      await tester.tap(
+        find.descendant(of: cartao, matching: find.text('Ver solicitação')),
+      );
+      await _esperarTexto(tester, find.text('Solicitação encerrada.'));
+      expect(
+        find.textContaining('já tem partida confirmada neste dia e horário'),
+        findsWidgets,
+      );
+      expect(find.text('Aceitar desafio'), findsNothing);
+      expect(find.byIcon(Icons.send), findsNothing);
+
+      // Conversas: B e C saíram dos pendentes; D continua.
+      await tester.tap(find.text('Conversas').last);
+      await _esperarTexto(tester, find.text('Dono D $marca'));
+      expect(find.text('Dono B $marca'), findsNothing);
+      expect(find.text('Dono C $marca'), findsNothing);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(
+        const Duration(seconds: 20),
+      ); // timers de timeout do ApiClient
+    },
+  );
+
+  testWidgets(
+    'recuperação de senha: e-mail real, link, nova senha e login',
+    skip: _url.isEmpty || _emails.isEmpty,
+    (tester) async {
+      tester.view.physicalSize = const Size(600, 1400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final (_, email) = (await tester.runAsync(() => _capitao('Senha')))!;
+      final links = StreamController<Uri>();
+      addTearDown(links.close);
+      final state = AppState(
+        criarRepositoriosApi(
+          ApiClient(baseUrl: _url),
+          armazenamento: ArmazenamentoEmMemoria(),
+        ),
+      );
+      await tester.pumpWidget(JogaContraApp(state: state, links: links.stream));
+      await _esperarTexto(tester, find.text('Seu time em campo.'));
+
+      // 1. Pede o link pela tela "Esqueci minha senha".
+      await tester.tap(find.text('Esqueci minha senha'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextFormField), email);
+      await tester.tap(find.text('Enviar link'));
+      await _esperarTexto(tester, find.text('Confira seu e-mail'));
+
+      // 2. O e-mail chega de verdade (servidor SMTP local) com o link.
+      final recebido = (await tester.runAsync(() => _emailPara(email)))!;
+      expect(recebido['assunto'], 'Recuperação de senha — Joga Contra');
+      final texto = recebido['texto'] as String;
+      expect(texto, contains('30 minutos'));
+      final token = RegExp(
+        r'/redefinir-senha#token=([A-Za-z0-9_-]{43})',
+      ).firstMatch(texto)!.group(1)!;
+
+      // 3. A página do link abre o app com jogacontra://redefinir-senha.
+      await tester.tap(find.text('Voltar para o login'));
+      await tester.pumpAndSettle();
+      links.add(Uri.parse('jogacontra://redefinir-senha?token=$token'));
+      await tester.pumpAndSettle();
+      expect(find.text('Crie uma nova senha'), findsOneWidget);
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Nova senha'),
+        _novaSenha,
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Confirmar nova senha'),
+        _novaSenha,
+      );
+      await tester.tap(find.text('Salvar nova senha'));
+      await _esperarTexto(tester, find.text('Senha alterada!'));
+      await tester.tap(find.text('Voltar para o login'));
+      await tester.pumpAndSettle();
+
+      // 4. A senha antiga não entra mais; a nova, sim.
+      await tester.enterText(find.byType(TextFormField).at(0), email);
+      await tester.enterText(find.byType(TextFormField).at(1), _senha);
+      await tester.tap(find.text('Entrar'));
+      await _esperarTexto(tester, find.text('E-mail ou senha inválidos.'));
+      await tester.enterText(find.byType(TextFormField).at(1), _novaSenha);
+      await tester.tap(find.text('Entrar'));
+      await _esperarTexto(tester, find.text('BOM TE VER, CAPITÃO'));
+
+      // 5. O mesmo link de novo: já utilizado.
+      await _semSnackbar(tester);
+      links.add(Uri.parse('jogacontra://redefinir-senha?token=$token'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Nova senha'),
+        'outra-senha-789',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Confirmar nova senha'),
+        'outra-senha-789',
+      );
+      await tester.tap(find.text('Salvar nova senha'));
+      await _esperarTexto(tester, find.text('Link já utilizado'));
+      expect(state.autenticado, isTrue); // a tentativa falha e nada muda
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 20));
     },
   );
 }

@@ -641,6 +641,12 @@ class _DemoAuth implements AuthRepository {
   @override
   Future<void> solicitarRecuperacaoSenha(String email) async {}
   @override
+  Future<void> redefinirSenha({
+    required String token,
+    required String novaSenha,
+    required String confirmacaoSenha,
+  }) async {}
+  @override
   Future<void> sair() async => _logado = false;
 }
 
@@ -803,6 +809,9 @@ class _DemoAnuncios implements AnuncioRepository {
 }
 
 class _DemoSolicitacoes implements SolicitacaoRepository {
+  /// Mesmo texto gravado pela API (proc_confirmar_solicitacao).
+  static const motivoMesmoHorario =
+      'O time desafiante já tem partida confirmada neste dia e horário.';
   _DemoSolicitacoes(this.db);
   final DemoBanco db;
 
@@ -820,6 +829,7 @@ class _DemoSolicitacoes implements SolicitacaoRepository {
     String? ultimaMensagem,
     DateTime? dataUltima,
     int? naoLidas,
+    String? motivo,
   }) => SolicitacaoConfronto(
     id: s.id,
     anuncio: s.anuncio,
@@ -829,6 +839,7 @@ class _DemoSolicitacoes implements SolicitacaoRepository {
     dataSolicitacao: s.dataSolicitacao,
     mensagemInicial: s.mensagemInicial,
     dataResposta: status != null ? DateTime.now() : s.dataResposta,
+    motivoEncerramento: motivo ?? s.motivoEncerramento,
     confirmadoAnunciante: confAnunciante ?? s.confirmadoAnunciante,
     confirmadoSolicitante: confSolicitante ?? s.confirmadoSolicitante,
     idPartida: idPartida ?? s.idPartida,
@@ -839,7 +850,13 @@ class _DemoSolicitacoes implements SolicitacaoRepository {
   );
 
   @override
-  Future<int> sincronizar() async => 0;
+  Future<Sincronizacao> sincronizar() async => Sincronizacao(
+    mensagensNaoLidas: 0,
+    versao: [
+      for (final s in db.solicitacoes) '${s.id}:${s.status.codigo}',
+      for (final p in db.partidas) '${p.id}:${p.status.name}',
+    ].join(','),
+  );
 
   @override
   Future<List<SolicitacaoConfronto>> listarDoMeuTime({
@@ -947,6 +964,27 @@ class _DemoSolicitacoes implements SolicitacaoRepository {
       final o = db.solicitacoes[j];
       if (j != i && o.anuncio.id == s.anuncio.id && o.status.emAberto) {
         db.solicitacoes[j] = _com(o, status: StatusSolicitacao.encerrada);
+      }
+    }
+    // Mesma regra da API: o desafiante não joga duas partidas ao mesmo tempo;
+    // as outras pendentes dele no mesmo dia e horário são encerradas.
+    final inicio = s.anuncio.dataHoraInicio;
+    for (var j = 0; j < db.solicitacoes.length; j++) {
+      final o = db.solicitacoes[j];
+      final h = o.anuncio.dataHoraInicio;
+      if (j != i &&
+          o.timeSolicitante.id == s.timeSolicitante.id &&
+          o.status.emAberto &&
+          h.year == inicio.year &&
+          h.month == inicio.month &&
+          h.day == inicio.day &&
+          h.hour == inicio.hour &&
+          h.minute == inicio.minute) {
+        db.solicitacoes[j] = _com(
+          o,
+          status: StatusSolicitacao.encerrada,
+          motivo: motivoMesmoHorario,
+        );
       }
     }
     return s;

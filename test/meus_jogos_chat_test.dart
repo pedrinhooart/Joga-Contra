@@ -179,6 +179,27 @@ void main() {
       expect(find.text('Ver solicitação'), findsOneWidget);
     });
 
+    testWidgets('Meus Desafios se atualiza sozinho quando algo muda fora', (
+      tester,
+    ) async {
+      final state = await _abrirApp(tester);
+      await _abrirMeusJogos(tester);
+      await _filtro(tester, 'Meus Desafios');
+      expect(find.text('Aguardando aceite'), findsOneWidget);
+
+      // Mudança feita em outro aparelho (aqui, direto no repositório).
+      await state.repositorios.solicitacoes.cancelar('s-real');
+      await tester.pump(const Duration(seconds: 10));
+      await tester.pumpAndSettle();
+      expect(find.text('Aguardando aceite'), findsOneWidget); // ainda não
+
+      // Próxima sincronização (a cada 30 s): a lista recarrega sozinha.
+      await tester.pump(const Duration(seconds: 21));
+      await tester.pumpAndSettle();
+      expect(find.text('Aguardando aceite'), findsNothing);
+      expect(find.text('Cancelada'), findsOneWidget);
+    });
+
     testWidgets('Meus Anúncios mostra a partida depois do aceite', (
       tester,
     ) async {

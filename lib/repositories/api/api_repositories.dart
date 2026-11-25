@@ -74,7 +74,18 @@ class ApiAuthRepository implements AuthRepository {
 
   @override
   Future<void> solicitarRecuperacaoSenha(String email) =>
-      _api.post('/auth/recuperar-senha', {'email': email});
+      _api.post('/auth/forgot-password', {'email': email});
+
+  @override
+  Future<void> redefinirSenha({
+    required String token,
+    required String novaSenha,
+    required String confirmacaoSenha,
+  }) => _api.post('/auth/reset-password', {
+    'token': token,
+    'novaSenha': novaSenha,
+    'confirmacaoSenha': confirmacaoSenha,
+  });
 
   @override
   Future<void> sair() async {
@@ -153,11 +164,9 @@ class ApiSolicitacaoRepository implements SolicitacaoRepository {
   ApiSolicitacaoRepository(this._api);
   final ApiClient _api;
   @override
-  Future<int> sincronizar() async =>
-      ((await _api.get('/solicitacoes/sincronizar')
-                  as _Json)['mensagensNaoLidas']
-              as num)
-          .toInt();
+  Future<Sincronizacao> sincronizar() async => Sincronizacao.fromJson(
+    await _api.get('/solicitacoes/sincronizar') as _Json,
+  );
 
   SolicitacaoConfronto _s(Object? d) =>
       SolicitacaoConfronto.fromJson(d as _Json);

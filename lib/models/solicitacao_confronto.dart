@@ -34,6 +34,7 @@ class SolicitacaoConfronto {
     required this.dataSolicitacao,
     this.mensagemInicial,
     this.dataResposta,
+    this.motivoEncerramento,
     this.confirmadoAnunciante = false,
     this.confirmadoSolicitante = false,
     this.idPartida,
@@ -50,6 +51,10 @@ class SolicitacaoConfronto {
   final DateTime dataSolicitacao;
   final String? mensagemInicial;
   final DateTime? dataResposta;
+
+  /// Por que deixou de estar pendente (ex.: o time já tem partida confirmada
+  /// no mesmo dia e horário). Vem da API; nulo quando não se aplica.
+  final String? motivoEncerramento;
 
   /// O pedido é a concordância do desafiante; o aceite do anunciante confirma.
   final bool confirmadoAnunciante, confirmadoSolicitante;
@@ -91,6 +96,7 @@ class SolicitacaoConfronto {
         dataResposta: json['dataResposta'] == null
             ? null
             : DateTime.parse(json['dataResposta'] as String).toLocal(),
+        motivoEncerramento: json['motivoEncerramento'] as String?,
         confirmadoAnunciante: json['confirmadoAnunciante'] as bool? ?? false,
         confirmadoSolicitante: json['confirmadoSolicitante'] as bool? ?? false,
         idPartida: json['idPartida'] as String?,
@@ -155,3 +161,19 @@ class Mensagem {
 
 /// Papel do meu time numa solicitação: dono do anúncio ou desafiante.
 enum PapelSolicitacao { anunciante, solicitante }
+
+/// Resultado da sincronização leve (`GET /solicitacoes/sincronizar`).
+class Sincronizacao {
+  const Sincronizacao({required this.mensagensNaoLidas, required this.versao});
+
+  final int mensagensNaoLidas;
+
+  /// Muda quando uma solicitação ou partida do meu time muda (aceite,
+  /// encerramento automático, cancelamento): o app recarrega as listas.
+  final String versao;
+
+  factory Sincronizacao.fromJson(Map<String, dynamic> json) => Sincronizacao(
+    mensagensNaoLidas: (json['mensagensNaoLidas'] as num?)?.toInt() ?? 0,
+    versao: json['versao'] as String? ?? '',
+  );
+}

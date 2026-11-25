@@ -1,5 +1,6 @@
 import { createApp } from './app.js';
 import { checkDatabase, pool } from './config/db.js';
+import { motivoEmailIndisponivel } from './config/email.js';
 import { env } from './config/env.js';
 import { agendarRotinas } from './services/rotinas.js';
 
@@ -12,6 +13,12 @@ const server = app.listen(env.PORT, env.HOST, async () => {
   } catch {
     console.error('MySQL indisponível; /api/health/db indicará o problema.');
   }
+  const semEmail = motivoEmailIndisponivel();
+  console.log(
+    semEmail
+      ? `E-mail de recuperação de senha desligado (${semEmail}).`
+      : `E-mail de recuperação de senha: ${env.EMAIL_PROVEDOR}.`,
+  );
 });
 
 const rotinas = agendarRotinas();

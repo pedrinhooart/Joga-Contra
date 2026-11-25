@@ -335,23 +335,77 @@ void main() {
       );
       expect(enviada.status, StatusMensagem.enviada);
       // Quem enviou sincroniza: a própria mensagem não muda de estado.
-      expect(await desafiante.repos.solicitacoes.sincronizar(), 0);
+      expect(
+        (await desafiante.repos.solicitacoes.sincronizar()).mensagensNaoLidas,
+        0,
+      );
       var vistas = await desafiante.repos.solicitacoes.mensagens(s.id);
       expect(vistas.single.status, StatusMensagem.enviada);
 
       // O app do dono sincroniza (sem abrir a conversa): entregue.
-      expect(await dono.repos.solicitacoes.sincronizar(), 1);
+      expect(
+        (await dono.repos.solicitacoes.sincronizar()).mensagensNaoLidas,
+        1,
+      );
       vistas = await desafiante.repos.solicitacoes.mensagens(s.id);
       expect(vistas.single.status, StatusMensagem.entregue);
       expect(vistas.single.dataLeitura, isNull);
 
       // O dono abre a conversa: visualizada.
       await dono.repos.solicitacoes.mensagens(s.id);
-      expect(await dono.repos.solicitacoes.sincronizar(), 0);
+      expect(
+        (await dono.repos.solicitacoes.sincronizar()).mensagensNaoLidas,
+        0,
+      );
       vistas = await desafiante.repos.solicitacoes.mensagens(s.id);
       expect(vistas.single.status, StatusMensagem.visualizada);
       expect(vistas.single.dataLeitura, isNotNull);
     });
+
+    test(
+      'aceite encerra os outros pedidos do desafiante no mesmo horário',
+      () async {
+        final joga = await _cadastrar('JOGA Horário');
+        final donoA = await _cadastrar('Dono A Horário');
+        final donoB = await _cadastrar('Dono B Horário');
+        final quando = DateTime.now().add(const Duration(days: 8));
+        final as21 = DateTime(quando.year, quando.month, quando.day, 21);
+        final pedidoA = await joga.repos.solicitacoes.solicitar(
+          (await _publicar(donoA, quando: as21)).id,
+        );
+        final pedidoB = await joga.repos.solicitacoes.solicitar(
+          (await _publicar(donoB, quando: as21)).id,
+        );
+
+        await donoA.repos.solicitacoes.confirmar(pedidoA.id);
+
+        final meus = await joga.repos.solicitacoes.listarDoMeuTime(
+          papel: PapelSolicitacao.solicitante,
+        );
+        final b = meus.singleWhere((s) => s.id == pedidoB.id);
+        expect(b.status, StatusSolicitacao.encerrada);
+        expect(b.motivoEncerramento, contains('neste dia e horário'));
+        expect(b.chatLiberado, isFalse);
+        expect(
+          meus.singleWhere((s) => s.id == pedidoA.id).status,
+          StatusSolicitacao.confirmada,
+        );
+        // Aceitar o encerrado: a API recusa e nada muda.
+        await expectLater(
+          donoB.repos.solicitacoes.confirmar(pedidoB.id),
+          throwsA(isA<ApiException>()),
+        );
+        expect(
+          (await donoB.repos.solicitacoes.obter(pedidoB.id)).status,
+          StatusSolicitacao.encerrada,
+        );
+        // A sincronização devolve a versão que faz o app recarregar as listas.
+        expect(
+          (await joga.repos.solicitacoes.sincronizar()).versao,
+          isNotEmpty,
+        );
+      },
+    );
 
     test('Meus Desafios só traz os pedidos feitos pelo meu time', () async {
       final a = await _cadastrar('Anunciante Filtro');

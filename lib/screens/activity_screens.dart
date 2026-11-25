@@ -742,6 +742,10 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// Encerrada, recusada ou cancelada: não volta a ficar em aberto.
+  static bool _finalizada(SolicitacaoConfronto s) =>
+      !s.status.emAberto && s.status != StatusSolicitacao.confirmada;
+
   /// Texto no lugar das mensagens enquanto o chat não está liberado.
   String _avisoSemChat(
     SolicitacaoConfronto s,
@@ -751,6 +755,8 @@ class _ChatScreenState extends State<ChatScreen> {
       '${s.timeSolicitante.nome} quer jogar contra vocês. Aceite o desafio para liberar o chat entre os capitães.',
     StatusSolicitacao.pendente =>
       'Solicitação enviada. O chat é liberado quando ${s.timeAnunciante.nome} aceitar o desafio.',
+    _ when s.motivoEncerramento != null =>
+      'Solicitação ${s.status.rotulo.toLowerCase()}: ${s.motivoEncerramento!} O chat entre os capitães não está disponível.',
     _ =>
       'Solicitação ${s.status.rotulo.toLowerCase()}. O chat entre os capitães não está disponível.',
   };
@@ -906,15 +912,32 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Encerrada, recusada ou cancelada: selo neutro e o motivo,
+                  // sem convite para seguir em frente.
                   TagPill(
                     s.status.emAberto ? 'Aguardando aceite' : s.status.rotulo,
-                    green: true,
+                    green: !_finalizada(s),
                   ),
                   const SizedBox(height: 8),
-                  const Text(
-                    'Quase tudo pronto!',
-                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                  Text(
+                    _finalizada(s)
+                        ? 'Solicitação ${s.status.rotulo.toLowerCase()}.'
+                        : 'Quase tudo pronto!',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                    ),
                   ),
+                  if (_finalizada(s) && s.motivoEncerramento != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      s.motivoEncerramento!,
+                      style: const TextStyle(
+                        color: AppColors.muted,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   Text(
                     '${eu.nome}  VS  ${adversario.nome}',

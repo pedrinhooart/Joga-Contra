@@ -32,7 +32,12 @@ export const cadastroSchema = z.object({
 
 export const loginSchema = z.object({ email, senha: z.string().min(1).max(72) });
 export const recuperarSenhaSchema = z.object({ email });
-export const redefinirSenhaSchema = z.object({ codigo: z.string().min(16).max(128), novaSenha: senha });
+// As regras da nova senha e da confirmação são conferidas na rota, com mensagens próprias.
+export const redefinirSenhaSchema = z.object({
+  token: z.string().max(200),
+  novaSenha: z.string().max(200),
+  confirmacaoSenha: z.string().max(200),
+});
 
 export const atualizacaoTimeSchema = z
   .object({

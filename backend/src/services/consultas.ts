@@ -60,7 +60,7 @@ export async function obterTime(db: Executor, idTime: string, incluirContato: bo
 
 const SELECT_SOLICITACAO = `
   SELECT s.id_solicitacao, s.id_anuncio, s.id_time_anunciante, s.id_time_solicitante, s.status,
-         s.mensagem_inicial, s.data_criacao, s.data_resposta,
+         s.mensagem_inicial, s.data_criacao, s.data_resposta, s.motivo_encerramento,
          s.data_confirmacao_anunciante, s.data_confirmacao_solicitante,
          ${colunasResumoTime('anunciante', 'ta', 'ua')},
          ${colunasResumoTime('solicitante', 'ts', 'us')},
@@ -92,6 +92,7 @@ async function montarSolicitacoes(db: Executor, linhas: Linha[], idMeuTime: stri
     dataSolicitacao: dataIso(r.data_criacao),
     mensagemInicial: r.mensagem_inicial,
     dataResposta: dataIso(r.data_resposta),
+    motivoEncerramento: r.motivo_encerramento ?? null,
     confirmadoAnunciante: r.data_confirmacao_anunciante != null,
     confirmadoSolicitante: r.data_confirmacao_solicitante != null,
     idPartida: r.id_partida,

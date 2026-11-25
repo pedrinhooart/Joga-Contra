@@ -324,6 +324,27 @@ BEGIN
 END$$
 
 -- =============================================================================
+-- Funções
+-- =============================================================================
+
+-- Data e hora local de início ('AAAA-MM-DD HH:MM') de uma partida, a partir do
+-- instante em UTC e da UF onde ela acontece — o horário que as pessoas
+-- escolheram no anúncio. Mesmos fusos de backend/src/services/fuso.ts (o Brasil
+-- não tem horário de verão desde 2019; o teste de integração confere os dois).
+CREATE FUNCTION fn_inicio_local(
+  p_inicio DATETIME(3),
+  p_uf     CHAR(2) CHARACTER SET ascii COLLATE ascii_bin)
+RETURNS CHAR(16) CHARACTER SET ascii
+DETERMINISTIC NO SQL
+RETURN DATE_FORMAT(
+  DATE_SUB(p_inicio, INTERVAL CASE
+    WHEN p_uf = 'AC' THEN 5
+    WHEN p_uf IN ('AM', 'MS', 'MT', 'RO', 'RR') THEN 4
+    ELSE 3
+  END HOUR),
+  '%Y-%m-%d %H:%i')$$
+
+-- =============================================================================
 -- Procedimentos transacionais
 -- =============================================================================
 
@@ -332,10 +353,21 @@ END$$
 -- anúncio), deixa o anúncio indisponível (encerrado), encerra as demais
 -- solicitações pendentes e notifica os capitães afetados e os envolvidos.
 --
--- Concorrência: o anúncio é bloqueado com FOR UPDATE antes de qualquer
--- verificação, serializando todas as confirmações do mesmo anúncio. Os índices
+-- Mesmo dia e horário (23/11/2026): o time desafiante não joga duas partidas ao
+-- mesmo tempo. Na mesma transação, as OUTRAS solicitações pendentes dele para
+-- jogos com a mesma data e hora local de início (fn_inicio_local) são
+-- encerradas — nunca a aceita, nunca as de outros times, nunca apagadas — e os
+-- donos desses anúncios e o próprio capitão desafiante são avisados.
+--
+-- Concorrência: 1º o time desafiante é bloqueado (FOR UPDATE), serializando os
+-- aceites de desafios do mesmo time — de dois aceites simultâneos para o mesmo
+-- horário, o segundo encontra a sua solicitação já encerrada e é recusado — e
+-- impedindo que ele crie solicitação nova até o fim (a FK de
+-- solicitacoes_confronto lê o time com bloqueio compartilhado). 2º o anúncio,
+-- serializando as confirmações do mesmo anúncio; 3º a solicitação. Os índices
 -- únicos un_solicitacoes_confronto_confirmada e un_partidas_anuncio impedem uma
 -- segunda confirmação mesmo que alguém altere as tabelas sem este procedimento.
+-- Qualquer erro desfaz tudo (ROLLBACK no tratador de exceções).
 --
 -- Retorna uma linha: id_solicitacao, status, data_confirmacao_anunciante,
 -- data_confirmacao_solicitante, id_partida (NULL se ainda falta um lado).
@@ -349,6 +381,11 @@ BEGIN
   DECLARE v_status_solicitacao VARCHAR(20);
   DECLARE v_status_anuncio VARCHAR(20);
   DECLARE v_inicio DATETIME(3);
+  DECLARE v_uf CHAR(2) CHARACTER SET ascii COLLATE ascii_bin;
+  DECLARE v_inicio_local CHAR(16) CHARACTER SET ascii;
+  DECLARE v_mesmo_horario JSON DEFAULT NULL;
+  DECLARE v_motivo_horario VARCHAR(255)
+    DEFAULT 'O time desafiante já tem partida confirmada neste dia e horário.';
   DECLARE v_exclusao DATETIME(3);
   DECLARE v_conf_anunciante DATETIME(3);
   DECLARE v_conf_solicitante DATETIME(3);
@@ -365,22 +402,28 @@ BEGIN
     RESIGNAL;
   END;
 
-  START TRANSACTION;
-
-  -- id_anuncio é imutável: pode ser lido sem bloqueio.
-  SELECT id_anuncio INTO v_id_anuncio
+  -- id_anuncio e o time desafiante são imutáveis: lidos antes da transação,
+  -- para que a fotografia de leitura dela só comece depois dos bloqueios.
+  SELECT id_anuncio, id_time_solicitante INTO v_id_anuncio, v_solicitante
     FROM solicitacoes_confronto WHERE id_solicitacao = p_id_solicitacao;
   IF v_id_anuncio IS NULL THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Solicitação não encontrada.';
   END IF;
 
-  -- 1º bloqueio: anúncio (ordem fixa anúncio -> solicitações evita impasses).
-  SELECT status, data_hora_inicio, data_exclusao
-    INTO v_status_anuncio, v_inicio, v_exclusao
+  START TRANSACTION;
+
+  -- 1º bloqueio: time desafiante (ordem fixa time -> anúncio -> solicitações).
+  SELECT id_time INTO v_solicitante
+    FROM times WHERE id_time = v_solicitante
+    FOR UPDATE;
+
+  -- 2º bloqueio: anúncio.
+  SELECT status, data_hora_inicio, sigla_estado, data_exclusao
+    INTO v_status_anuncio, v_inicio, v_uf, v_exclusao
     FROM anuncios_partidas WHERE id_anuncio = v_id_anuncio
     FOR UPDATE;
 
-  -- 2º bloqueio: a solicitação, relida após obter o bloqueio do anúncio.
+  -- 3º bloqueio: a solicitação, relida após obter os bloqueios anteriores.
   SELECT s.status, s.id_time_anunciante, s.id_time_solicitante,
          s.data_confirmacao_anunciante, s.data_confirmacao_solicitante
     INTO v_status_solicitacao, v_anunciante, v_solicitante, v_conf_anunciante, v_conf_solicitante
@@ -459,6 +502,53 @@ BEGIN
            motivo_encerramento = 'Partida confirmada com outro time.'
      WHERE id_anuncio = v_id_anuncio AND status = 'pendente'
        AND id_solicitacao <> p_id_solicitacao;
+
+    -- e2) mesmo dia e horário: as outras solicitações PENDENTES do time
+    --     desafiante para jogos com a mesma data e hora local de início.
+    --     Leitura sem bloqueio dos anúncios (evita impasse com quem confirma
+    --     aqueles anúncios); o time está bloqueado desde o início, então nenhuma
+    --     solicitação nova dele aparece até o COMMIT. O UPDATE relê o status
+    --     atual com bloqueio: só encerra o que ainda está pendente.
+    SET v_inicio_local = fn_inicio_local(v_inicio, v_uf);
+    SELECT JSON_ARRAYAGG(s.id_solicitacao) INTO v_mesmo_horario
+      FROM solicitacoes_confronto s
+      JOIN anuncios_partidas a ON a.id_anuncio = s.id_anuncio
+     WHERE s.id_time_solicitante = v_solicitante AND s.status = 'pendente'
+       AND s.id_solicitacao <> p_id_solicitacao AND s.id_anuncio <> v_id_anuncio
+       AND fn_inicio_local(a.data_hora_inicio, a.sigla_estado) = v_inicio_local;
+
+    IF v_mesmo_horario IS NOT NULL THEN
+      UPDATE solicitacoes_confronto
+         SET status = 'encerrada', data_resposta = v_agora,
+             motivo_encerramento = v_motivo_horario
+       WHERE id_time_solicitante = v_solicitante AND status = 'pendente'
+         AND id_solicitacao <> p_id_solicitacao
+         AND id_solicitacao MEMBER OF (v_mesmo_horario);
+
+      -- Avisos: o dono de cada anúncio perde o desafiante; o capitão
+      -- desafiante entende por que os outros pedidos saíram dos pendentes.
+      INSERT INTO notificacoes (id_notificacao, id_usuario_destinatario, tipo, titulo, mensagem,
+                                id_solicitacao, data_criacao)
+      SELECT UUID(), ta.id_capitao, 'solicitacao_encerrada', 'Desafio retirado.',
+             LEFT(CONCAT(v_nome_solicitante, ' confirmou outra partida no mesmo dia e horário. ',
+                         'A solicitação para o seu jogo foi encerrada.'), 500),
+             s.id_solicitacao, v_agora
+        FROM solicitacoes_confronto s
+        JOIN times ta ON ta.id_time = s.id_time_anunciante
+       WHERE s.id_solicitacao MEMBER OF (v_mesmo_horario)
+         AND s.status = 'encerrada' AND s.data_resposta = v_agora
+         AND s.motivo_encerramento = v_motivo_horario
+      UNION ALL
+      SELECT UUID(), v_capitao_solicitante, 'solicitacao_encerrada', 'Desafio encerrado.',
+             LEFT(CONCAT('Vocês já jogam contra ', v_nome_anunciante, ' nesse dia e horário. ',
+                         'O desafio para o jogo de ', ta.nome, ' foi encerrado.'), 500),
+             s.id_solicitacao, v_agora
+        FROM solicitacoes_confronto s
+        JOIN times ta ON ta.id_time = s.id_time_anunciante
+       WHERE s.id_solicitacao MEMBER OF (v_mesmo_horario)
+         AND s.status = 'encerrada' AND s.data_resposta = v_agora
+         AND s.motivo_encerramento = v_motivo_horario;
+    END IF;
 
     -- f) aviso aos dois capitães envolvidos
     INSERT INTO notificacoes (id_notificacao, id_usuario_destinatario, tipo, titulo, mensagem,

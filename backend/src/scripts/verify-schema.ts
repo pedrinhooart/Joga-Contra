@@ -18,7 +18,7 @@ const TABELAS = [
 ];
 const PROCEDIMENTOS = [
   'proc_confirmar_solicitacao', 'proc_recusar_solicitacao', 'proc_cancelar_solicitacao', 'proc_cancelar_partida',
-  'proc_excluir_anuncio', 'proc_expirar_anuncios', 'proc_marcar_partidas_realizadas',
+  'proc_excluir_anuncio', 'proc_expirar_anuncios', 'proc_marcar_partidas_realizadas', 'fn_inicio_local',
 ];
 
 async function main() {

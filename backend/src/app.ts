@@ -12,6 +12,7 @@ import { healthRouter } from './routes/health.js';
 import { locaisRouter } from './routes/locais.js';
 import { notificacoesRouter } from './routes/notificacoes.js';
 import { partidasRouter } from './routes/partidas.js';
+import { publicoRouter } from './routes/publico.js';
 import { referenciasRouter } from './routes/referencias.js';
 import { solicitacoesRouter } from './routes/solicitacoes.js';
 import { timesRouter } from './routes/times.js';
@@ -19,6 +20,9 @@ import { timesRouter } from './routes/times.js';
 export function createApp() {
   const app = express();
   const origens = env.CORS_ORIGIN === '*' ? true : env.CORS_ORIGIN.split(',').map((v) => v.trim());
+  // Atrás de um proxy (nginx, balanceador), o IP real do cliente vem dele: sem
+  // isso, todos os pedidos pareceriam do mesmo IP nos limites de tentativas.
+  if (env.TRUST_PROXY > 0) app.set('trust proxy', env.TRUST_PROXY);
 
   if (env.NODE_ENV !== 'test') {
     // Só método, caminho e status: nunca corpo, query string ou cabeçalhos.
@@ -32,6 +36,14 @@ export function createApp() {
   }
 
   app.use(helmet());
+  // Em produção, só HTTPS (senhas, tokens de sessão e links de recuperação).
+  // A verificação de saúde fica livre para o balanceador.
+  if (env.NODE_ENV === 'production') {
+    app.use((req, res, next) => {
+      if (req.secure || req.path.startsWith('/api/health')) return next();
+      res.status(403).json({ error: { code: 'HTTPS_REQUIRED', message: 'Use HTTPS para acessar a API.' } });
+    });
+  }
   app.use(cors({ origin: origens }));
   app.use(express.json({ limit: '100kb' }));
   // Acentos sempre na forma composta (NFC): alguns teclados mandam "ã" como
@@ -53,8 +65,9 @@ export function createApp() {
       });
     app.use('/api/auth/login', limitar(10, true)); // conta só as tentativas erradas
     app.use('/api/auth/cadastro', limitar(10));
-    app.use('/api/auth/recuperar-senha', limitar(5));
-    app.use('/api/auth/redefinir-senha', limitar(5));
+    // Recuperação de senha: por IP aqui; por conta, na própria rota.
+    app.use(['/api/auth/forgot-password', '/api/auth/recuperar-senha'], limitar(5));
+    app.use(['/api/auth/reset-password', '/api/auth/redefinir-senha'], limitar(10));
   }
 
   // Imagens enviadas (escudos). Nomes únicos por envio: podem ficar em cache.
@@ -72,6 +85,8 @@ export function createApp() {
   app.use('/api/partidas', partidasRouter);
   app.use('/api/notificacoes', notificacoesRouter);
   app.use('/api/locais', locaisRouter);
+  // Fora de /api: página aberta pelo link do e-mail e associação dos App Links.
+  app.use(publicoRouter);
 
   app.use(notFound);
   app.use(errorHandler);

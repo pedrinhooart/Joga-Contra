@@ -12,7 +12,7 @@ import {
   obterSolicitacao,
   participacaoNaSolicitacao,
 } from '../services/consultas.js';
-import { consultar, criarNotificacao, emTransacao, limiteSql, uuid } from '../services/helpers.js';
+import { consultar, criarNotificacao, emTransacao, limiteSql, repetirEmImpasse, uuid } from '../services/helpers.js';
 import { mapearMensagem } from '../services/mapeadores.js';
 
 export const solicitacoesRouter = Router();
@@ -48,7 +48,20 @@ solicitacoesRouter.get('/sincronizar', async (req, res) => {
         AND (s.id_time_anunciante = ? OR s.id_time_solicitante = ?)`,
     [idTime, idTime, idTime],
   );
-  res.json({ data: { mensagensNaoLidas: Number(linha.total) } });
+  // Muda sempre que uma solicitação ou partida do meu time muda (pedido novo,
+  // aceite, encerramento automático, cancelamento): o app recarrega as listas.
+  const [versao] = await consultar(
+    pool,
+    `SELECT CONCAT_WS('|',
+              (SELECT CONCAT(COUNT(*), '@', COALESCE(MAX(data_atualizacao), '')) FROM solicitacoes_confronto
+                WHERE id_time_solicitante = ?),
+              (SELECT CONCAT(COUNT(*), '@', COALESCE(MAX(data_atualizacao), '')) FROM solicitacoes_confronto
+                WHERE id_time_anunciante = ?),
+              (SELECT CONCAT(COUNT(*), '@', COALESCE(MAX(data_atualizacao), '')) FROM partidas
+                WHERE id_time_anunciante = ? OR id_time_adversario = ?)) AS versao`,
+    [idTime, idTime, idTime, idTime],
+  );
+  res.json({ data: { mensagensNaoLidas: Number(linha.total), versao: String(versao.versao) } });
 });
 
 solicitacoesRouter.get('/:idSolicitacao', async (req, res) => {
@@ -110,7 +123,9 @@ solicitacoesRouter.post('/', async (req, res) => {
  * Aceite do desafio: só o capitão do time anunciante. O pedido do desafiante já
  * é a concordância dele; o aceite registra os dois lados e o procedimento cria a
  * partida, encerra o anúncio e as demais solicitações, notifica os capitães e
- * libera o chat — tudo numa transação com bloqueio do anúncio.
+ * libera o chat — tudo numa transação com bloqueio do time desafiante e do
+ * anúncio. Na mesma transação, as outras solicitações pendentes do desafiante
+ * para jogos na mesma data e hora local são encerradas (02_rotinas.sql).
  * Procedimentos abrem a própria transação: são chamados fora de `emTransacao`.
  */
 solicitacoesRouter.patch('/:idSolicitacao/confirmar', async (req, res) => {
@@ -120,17 +135,21 @@ solicitacoesRouter.patch('/:idSolicitacao/confirmar', async (req, res) => {
   if (participacao.id_time_anunciante !== idTime) {
     throw new ApiError(403, 'Somente o capitão do time anunciante aceita o desafio.', 'FORBIDDEN');
   }
-  const [solicitante] = await consultar(
-    pool,
-    `SELECT s.data_confirmacao_solicitante, t.id_capitao
-       FROM solicitacoes_confronto s JOIN times t ON t.id_time = s.id_time_solicitante
-      WHERE s.id_solicitacao = ?`,
-    [idSolicitacao],
-  );
-  if (!solicitante.data_confirmacao_solicitante) {
-    await pool.execute('CALL proc_confirmar_solicitacao(?, ?)', [idSolicitacao, solicitante.id_capitao]);
-  }
-  await pool.execute('CALL proc_confirmar_solicitacao(?, ?)', [idSolicitacao, req.auth!.idUsuario]);
+  // Impasse (deadlock) entre aceites simultâneos: o MySQL desfaz a transação
+  // inteira, então repetir é seguro. Regras de negócio não são repetidas.
+  await repetirEmImpasse(async () => {
+    const [solicitante] = await consultar(
+      pool,
+      `SELECT s.data_confirmacao_solicitante, t.id_capitao
+         FROM solicitacoes_confronto s JOIN times t ON t.id_time = s.id_time_solicitante
+        WHERE s.id_solicitacao = ?`,
+      [idSolicitacao],
+    );
+    if (!solicitante.data_confirmacao_solicitante) {
+      await pool.execute('CALL proc_confirmar_solicitacao(?, ?)', [idSolicitacao, solicitante.id_capitao]);
+    }
+    await pool.execute('CALL proc_confirmar_solicitacao(?, ?)', [idSolicitacao, req.auth!.idUsuario]);
+  });
   res.json({ data: await obterSolicitacao(pool, idSolicitacao, idTime) });
 });
 

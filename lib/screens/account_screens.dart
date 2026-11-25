@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../core/formatters.dart';
 import '../models/anuncio_partida.dart';
@@ -5,6 +6,7 @@ import '../models/notificacao.dart';
 import '../models/partida.dart';
 import '../models/referencia.dart';
 import '../models/usuario.dart';
+import '../services/api_client.dart';
 import '../services/municipios.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -1150,7 +1152,16 @@ class _AuthScreenState extends State<AuthScreen> {
   String? estado;
   bool enviando = false;
 
+  /// Recuperação pedida: a tela mostra a orientação no lugar do formulário.
+  bool linkEnviado = false;
+
   static const _senhaMinima = 8;
+
+  @override
+  void didUpdateWidget(AuthScreen anterior) {
+    super.didUpdateWidget(anterior);
+    if (anterior.page != widget.page) linkEnviado = false;
+  }
 
   @override
   void dispose() {
@@ -1171,6 +1182,7 @@ class _AuthScreenState extends State<AuthScreen> {
   @override
   Widget build(BuildContext context) {
     final page = widget.page;
+    if (page == 'forgot' && linkEnviado) return _linkEnviado();
     final refs = AppScope.of(context).referencias;
     final title = page == 'login'
         ? 'Seu time em campo.'
@@ -1299,10 +1311,12 @@ class _AuthScreenState extends State<AuthScreen> {
           Center(
             child: TextButton(
               onPressed: () =>
-                  widget.onPage(page == 'register' ? 'login' : 'register'),
+                  widget.onPage(page == 'login' ? 'register' : 'login'),
               child: Text(
                 page == 'register'
                     ? 'Já tem conta? Entrar'
+                    : page == 'forgot'
+                    ? 'Lembrou a senha? Entrar'
                     : 'Ainda não tem conta? Criar conta',
               ),
             ),
@@ -1311,6 +1325,73 @@ class _AuthScreenState extends State<AuthScreen> {
       ),
     );
   }
+
+  /// Pedido de recuperação feito. A mensagem é a mesma para qualquer e-mail:
+  /// o app não sabe (nem diz) se a conta existe.
+  Widget _linkEnviado() => ListView(
+    padding: const EdgeInsets.fromLTRB(22, 40, 22, 30),
+    children: [
+      const Center(child: BrandMark()),
+      const SizedBox(height: 38),
+      const Icon(
+        Icons.mark_email_read_outlined,
+        size: 56,
+        color: AppColors.green,
+      ),
+      const SizedBox(height: 14),
+      const Text(
+        'Confira seu e-mail',
+        textAlign: TextAlign.center,
+        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
+      ),
+      const SizedBox(height: 10),
+      // O endereço em linha própria: endereços longos não quebram no meio
+      // do texto corrido.
+      const Text(
+        'Se este e-mail estiver cadastrado:',
+        textAlign: TextAlign.center,
+        style: TextStyle(fontSize: 14, height: 1.4),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        email.text.trim().toLowerCase(),
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          fontSize: 14,
+          height: 1.4,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      const SizedBox(height: 4),
+      const Text(
+        'você vai receber um link para criar uma nova senha. '
+        'O link vale por 30 minutos.',
+        textAlign: TextAlign.center,
+        style: TextStyle(fontSize: 14, height: 1.4),
+      ),
+      const SizedBox(height: 10),
+      const Text(
+        'Abra o e-mail neste celular e toque em "Redefinir minha senha". '
+        'Não chegou? Veja a caixa de spam ou peça de novo em alguns minutos.',
+        textAlign: TextAlign.center,
+        style: TextStyle(color: AppColors.muted, fontSize: 12, height: 1.4),
+      ),
+      const SizedBox(height: 24),
+      ActionButton(
+        'Voltar para o login',
+        icon: Icons.arrow_forward,
+        expand: true,
+        onPressed: () => widget.onPage('login'),
+      ),
+      const SizedBox(height: 8),
+      Center(
+        child: TextButton(
+          onPressed: () => setState(() => linkEnviado = false),
+          child: const Text('Usar outro e-mail'),
+        ),
+      ),
+    ],
+  );
 
   /// Só o necessário para a conta. Modalidade, categoria, nível e quantidade
   /// de jogadores são informados em cada anúncio de partida.
@@ -1352,11 +1433,9 @@ class _AuthScreenState extends State<AuthScreen> {
       switch (widget.page) {
         case 'forgot':
           await app.repositorios.auth.solicitarRecuperacaoSenha(
-            email.text.trim(),
+            email.text.trim().toLowerCase(),
           );
-          widget.onDone(
-            'Se o e-mail estiver cadastrado, você receberá um link de recuperação.',
-          );
+          if (mounted) setState(() => linkEnviado = true);
         case 'register':
           // O validador da cidade já exigiu a lista carregada.
           final municipios = Municipios.carregado!;
@@ -1378,6 +1457,245 @@ class _AuthScreenState extends State<AuthScreen> {
       }
     } catch (e) {
       if (mounted) _avisar(context, '$e');
+    } finally {
+      if (mounted) setState(() => enviando = false);
+    }
+  }
+}
+
+/// Nova senha a partir do link do e-mail de recuperação. Mostra também o que
+/// fazer quando o link expirou, já foi usado, foi substituído ou é inválido.
+class RedefinirSenhaScreen extends StatefulWidget {
+  const RedefinirSenhaScreen({
+    super.key,
+    required this.onPedirNovoLink,
+    required this.onConcluir,
+  });
+
+  /// Leva à tela "Esqueci minha senha".
+  final VoidCallback onPedirNovoLink;
+
+  /// Senha trocada ou desistência: volta para o login.
+  final VoidCallback onConcluir;
+
+  @override
+  State<RedefinirSenhaScreen> createState() => _RedefinirSenhaScreenState();
+}
+
+class _RedefinirSenhaScreenState extends State<RedefinirSenhaScreen> {
+  final form = GlobalKey<FormState>();
+  final nova = TextEditingController(), confirmacao = TextEditingController();
+  bool enviando = false, ocultar = true, concluido = false;
+
+  /// Link que não serve mais: título e explicação vinda da API.
+  (String, String)? problemaLink;
+
+  /// Outros erros (validação, sem conexão): exibidos sob o formulário.
+  String? erro;
+
+  static const _senhaMinima = 8;
+
+  /// Mesmo limite da API: o bcrypt considera só 72 bytes.
+  static const _senhaMaximaBytes = 72;
+  static const _titulosProblema = {
+    'TOKEN_EXPIRADO': 'Link expirado',
+    'TOKEN_UTILIZADO': 'Link já utilizado',
+    'TOKEN_SUBSTITUIDO': 'Link substituído',
+    'TOKEN_INVALIDO': 'Link inválido',
+  };
+
+  @override
+  void dispose() {
+    nova.dispose();
+    confirmacao.dispose();
+    super.dispose();
+  }
+
+  String? _validarNova(String? v) {
+    final senha = v ?? '';
+    if (senha.trim().length < _senhaMinima) {
+      return 'A senha precisa de pelo menos $_senhaMinima caracteres';
+    }
+    if (utf8.encode(senha).length > _senhaMaximaBytes) {
+      return 'Senha longa demais';
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final token = AppScope.of(context).tokenRedefinicao ?? '';
+    final problema =
+        problemaLink ??
+        (token.isEmpty
+            ? (
+                'Link inválido',
+                'Este link está incompleto. Abra de novo o e-mail ou peça um novo link.',
+              )
+            : null);
+    return Form(
+      key: form,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(22, 40, 22, 30),
+        children: [
+          const Center(child: BrandMark()),
+          const SizedBox(height: 38),
+          if (concluido)
+            ..._resultado(
+              icone: Icons.check_circle_outline,
+              cor: AppColors.green,
+              titulo: 'Senha alterada!',
+              texto:
+                  'Sua nova senha já vale. Por segurança, as sessões abertas '
+                  'em outros aparelhos foram encerradas.',
+              acoes: [
+                ActionButton(
+                  'Voltar para o login',
+                  icon: Icons.arrow_forward,
+                  expand: true,
+                  onPressed: widget.onConcluir,
+                ),
+              ],
+            )
+          else if (problema != null)
+            ..._resultado(
+              icone: Icons.link_off,
+              cor: AppColors.muted,
+              titulo: problema.$1,
+              texto: problema.$2,
+              acoes: [
+                ActionButton(
+                  'Pedir novo link',
+                  icon: Icons.mail_outline,
+                  expand: true,
+                  onPressed: widget.onPedirNovoLink,
+                ),
+                const SizedBox(height: 8),
+                Center(
+                  child: TextButton(
+                    onPressed: widget.onConcluir,
+                    child: const Text('Voltar para o login'),
+                  ),
+                ),
+              ],
+            )
+          else
+            ..._formulario(),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _formulario() => [
+    const Text(
+      'Crie uma nova senha',
+      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
+    ),
+    const SizedBox(height: 5),
+    const Text(
+      'Use pelo menos 8 caracteres. Depois, entre com a nova senha.',
+      style: TextStyle(color: AppColors.muted, fontSize: 12),
+    ),
+    const SizedBox(height: 17),
+    TextFormField(
+      controller: nova,
+      obscureText: ocultar,
+      autofillHints: const [AutofillHints.newPassword],
+      decoration: InputDecoration(
+        labelText: 'Nova senha',
+        hintText: 'Pelo menos $_senhaMinima caracteres',
+        suffixIcon: IconButton(
+          tooltip: ocultar ? 'Mostrar senha' : 'Ocultar senha',
+          onPressed: () => setState(() => ocultar = !ocultar),
+          icon: Icon(ocultar ? Icons.visibility : Icons.visibility_off),
+        ),
+      ),
+      validator: _validarNova,
+    ),
+    const SizedBox(height: 10),
+    TextFormField(
+      controller: confirmacao,
+      obscureText: ocultar,
+      autofillHints: const [AutofillHints.newPassword],
+      decoration: const InputDecoration(labelText: 'Confirmar nova senha'),
+      validator: (v) => v != nova.text ? 'As senhas não são iguais' : null,
+    ),
+    if (erro != null) ...[
+      const SizedBox(height: 12),
+      Text(
+        erro!,
+        style: TextStyle(
+          color: Theme.of(context).colorScheme.error,
+          fontSize: 13,
+        ),
+      ),
+    ],
+    const SizedBox(height: 18),
+    ActionButton(
+      enviando ? 'Salvando…' : 'Salvar nova senha',
+      icon: Icons.check,
+      expand: true,
+      onPressed: enviando ? null : _salvar,
+    ),
+    if (enviando) ...[
+      const SizedBox(height: 10),
+      const LinearProgressIndicator(color: AppColors.green),
+    ],
+    const SizedBox(height: 8),
+    Center(
+      child: TextButton(
+        onPressed: enviando ? null : widget.onConcluir,
+        child: const Text('Cancelar'),
+      ),
+    ),
+  ];
+
+  List<Widget> _resultado({
+    required IconData icone,
+    required Color cor,
+    required String titulo,
+    required String texto,
+    required List<Widget> acoes,
+  }) => [
+    Icon(icone, size: 56, color: cor),
+    const SizedBox(height: 14),
+    Text(
+      titulo,
+      textAlign: TextAlign.center,
+      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
+    ),
+    const SizedBox(height: 10),
+    Text(
+      texto,
+      textAlign: TextAlign.center,
+      style: const TextStyle(fontSize: 14, height: 1.4),
+    ),
+    const SizedBox(height: 24),
+    ...acoes,
+  ];
+
+  Future<void> _salvar() async {
+    if (!form.currentState!.validate()) return;
+    final app = AppScope.of(context);
+    setState(() {
+      enviando = true;
+      erro = null;
+    });
+    try {
+      await app.redefinirSenha(nova.text, confirmacao.text);
+      if (mounted) setState(() => concluido = true);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      final titulo = _titulosProblema[e.code];
+      setState(() {
+        if (titulo != null) {
+          problemaLink = (titulo, e.message);
+        } else {
+          erro = e.message;
+        }
+      });
+    } catch (e) {
+      if (mounted) setState(() => erro = '$e');
     } finally {
       if (mounted) setState(() => enviando = false);
     }

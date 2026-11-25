@@ -29,6 +29,22 @@ export async function emTransacao<T>(acao: (db: PoolConnection) => Promise<T>): 
   }
 }
 
+/**
+ * Repete `acao` quando o MySQL a escolhe como vítima de um impasse (deadlock):
+ * a transação inteira já foi desfeita, então a nova tentativa parte do zero.
+ * Outros erros (inclusive regras de negócio) sobem na hora.
+ */
+export async function repetirEmImpasse<T>(acao: () => Promise<T>, tentativas = 3): Promise<T> {
+  for (let i = 1; ; i++) {
+    try {
+      return await acao();
+    } catch (erro: any) {
+      if (erro?.code !== 'ER_LOCK_DEADLOCK' || i >= tentativas) throw erro;
+      await new Promise((r) => setTimeout(r, 20 * i + Math.random() * 30));
+    }
+  }
+}
+
 /** `?, ?, ?` para cláusulas IN. */
 export const marcadores = (quantidade: number) => Array(quantidade).fill('?').join(', ');
 
